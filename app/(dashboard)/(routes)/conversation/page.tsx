@@ -73,6 +73,9 @@ const ConversationPage = () => {
           </FormProvider>
         </div>
       </div>
+      <div className="space-y-4 mt-4">
+        Messages content
+      </div>
     </div>
   );
 };
