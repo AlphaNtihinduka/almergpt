@@ -2,9 +2,9 @@ import OpenAI from "openai";
 import { auth } from "@clerk/nextjs/server";
 
 // console.log("OPENAI_API_KEY:", process.env.OPENAI_KEY);
-// const openai = new OpenAI({
-//   apiKey: process.env.OPENAI_KEY, // Ensure this matches the variable in your `.env` file
-// });
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_KEY, // Ensure this matches the variable in your `.env` file
+});
 
 const mockResponse = {
     choices: [
@@ -30,13 +30,13 @@ export async function POST(req: Request) {
     }
 
     // Call OpenAI API
-    // const response = await openai.chat.completions.create({
-    //   model: "gpt-3.5-turbo",
-    //   messages,
-    //   max_tokens: 2,
-    // });
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages,
+      max_tokens: 2,
+    });
 
-    const response = mockResponse;
+    // const response = mockResponse;
 
     // Extract the reply
     const reply = response.choices?.[0]?.message?.content || "No response received.";
