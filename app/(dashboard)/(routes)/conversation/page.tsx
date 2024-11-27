@@ -13,6 +13,8 @@ import axios from "axios";
 import { useState } from "react";
 import Empty from "@/components/empty";
 import Loader from "@/components/loader";
+import UserAvatar from "@/components/user-avatar";
+import BotAvatar from "@/components/bot-avatar";
 
 // Message type definition
 type Message = {
@@ -116,7 +118,7 @@ const ConversationPage = () => {
         {messages.length === 0 && !isLoading && (
           <Empty label={"No conversation started."} />
         )}
-        <div className="flex flex-col-reverse gap-y-4">
+        <div className="flex flex-col gap-y-4 ">
           {messages.map((message, index) => (
             <div
               key={index}
@@ -124,9 +126,13 @@ const ConversationPage = () => {
                 message.role === "user" ? "text-blue-600" : "text-gray-600"
               }`}
             >
-              {message.content}
+              {message.role === "user" ? <UserAvatar/> : <BotAvatar/>}
+              <p className="text-sm">
+                {message.content}
+              </p>
             </div>
           ))}
+          
         </div>
       </div>
     </div>
