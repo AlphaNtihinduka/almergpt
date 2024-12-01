@@ -15,6 +15,7 @@ import Empty from "@/components/empty";
 import Loader from "@/components/loader";
 import UserAvatar from "@/components/user-avatar";
 import BotAvatar from "@/components/bot-avatar";
+import ReactMarkDown from 'react-markdown';
 
 // Message type definition
 type Message = {
@@ -127,9 +128,9 @@ const CodePage = () => {
               }`}
             >
               {message.role === "user" ? <UserAvatar/> : <BotAvatar/>}
-              <p className="text-sm">
-                {message.content}
-              </p>
+              <ReactMarkDown>
+                {message.content || ""}
+              </ReactMarkDown>
             </div>
           ))}
           

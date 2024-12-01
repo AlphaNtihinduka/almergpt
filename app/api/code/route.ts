@@ -42,7 +42,7 @@ export async function POST(req: Request) {
     const response = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: fullMessages,
-      max_tokens: 50, // Adjusted for more flexibility in response length
+      max_tokens: 2, // Adjusted for more flexibility in response length
     });
 
     // const response = mockResponse;
