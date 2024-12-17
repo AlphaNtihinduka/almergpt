@@ -34,6 +34,7 @@ const MusicPage = () => {
       setMusic(undefined);
       const response = await axios.post("/api/music", values);
       setMusic(response.data.audio);
+      console.log("Audio data URI:", response.data.audio);
     } catch (error: any) {
       console.error("Error during submission:", error);
     }
@@ -43,7 +44,7 @@ const MusicPage = () => {
     <div>
       <Heading
         title="Music"
-        description="Amazing music"
+        description="Generate amazing music based on a prompt"
         icon={MusicIcon}
         iconColor="text-violet-500"
         bgColor="bg-violet-500/10"
@@ -60,7 +61,7 @@ const MusicPage = () => {
                 <FormItem className="col-span-12 lg:col-span-10">
                   <FormControl className="m-0 p-0">
                     <Input
-                      placeholder="Input prompt"
+                      placeholder="Enter a music prompt"
                       disabled={isLoading}
                       {...field}
                     />
@@ -84,10 +85,11 @@ const MusicPage = () => {
             <Loader />
           </div>
         )}
-        {!music && !isLoading && <Empty label="No music generated." />}
+        {!music && !isLoading && <Empty label="No music generated yet." />}
         {music && (
           <audio controls className="w-full mt-8">
-            <source src={music} />
+            <source src={music} type="audio/mp3" />
+            Your browser does not support the audio element.
           </audio>
         )}
       </div>

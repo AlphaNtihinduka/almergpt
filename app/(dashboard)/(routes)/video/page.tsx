@@ -1,7 +1,7 @@
 "use client";
 
 import Heading from "@/components/heading";
-import { MusicIcon } from "lucide-react";
+import { VideoIcon } from "lucide-react";
 import { useForm, FormProvider } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -20,8 +20,8 @@ type Message = {
   content: string;
 };
 
-const MusicPage = () => {
-  const [music, setMusic] = useState<string>();
+const VideoPage = () => {
+  const [video, setVideo] = useState<string>();
   const formMethods = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: { prompt: "" },
@@ -31,9 +31,10 @@ const MusicPage = () => {
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
-      setMusic(undefined);
-      const response = await axios.post("/api/music", values);
-      setMusic(response.data.audio);
+      setVideo(undefined);
+      const response = await axios.post("/api/video", values);
+      setVideo(response.data.video);
+      console.log("video display: ",response.data.video)
     } catch (error: any) {
       console.error("Error during submission:", error);
     }
@@ -44,9 +45,9 @@ const MusicPage = () => {
       <Heading
         title="Music"
         description="Amazing music"
-        icon={MusicIcon}
-        iconColor="text-violet-500"
-        bgColor="bg-violet-500/10"
+        icon={VideoIcon}
+        iconColor="text-orange-700"
+        bgColor="bg-orange-700/10"
       />
       <div className="px-4 lg:px-8">
         <FormProvider {...formMethods}>
@@ -84,15 +85,15 @@ const MusicPage = () => {
             <Loader />
           </div>
         )}
-        {!music && !isLoading && <Empty label="No music generated." />}
-        {music && (
-          <audio controls className="w-full mt-8">
-            <source src={music} />
-          </audio>
+        {!video && !isLoading && <Empty label="No video generated." />}
+        {video && (
+          <video className="w-full mt-8 aspect-video rounded-lg border bg-black" controls>
+            <source src={video} />
+          </video>
         )}
       </div>
     </div>
   );
 };
 
-export default MusicPage;
+export default VideoPage;
