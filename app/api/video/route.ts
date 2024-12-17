@@ -44,7 +44,7 @@ export async function POST(req: Request) {
     // Mock Response or Real API Call
     const response = USE_MOCK
       ? {
-          video: "https://www.w3schools.com/html/mov_bbb.mp4",
+          video: "/braveboy.mp4",
           metadata: { duration: "3:45", format: "mp4" },
         }
       : (await replicate.run(
