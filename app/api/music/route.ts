@@ -7,7 +7,7 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN!,
 });
 
-const USE_MOCK = false; // Set to false to use the real API.
+const USE_MOCK = true; // Set to false to use the real API.
 
 // Helper function: Convert ReadableStream to Base64
 async function streamToBase64(stream: ReadableStream) {
