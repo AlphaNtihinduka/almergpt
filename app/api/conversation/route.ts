@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 
 // console.log("OPENAI_API_KEY:", process.env.OPENAI_KEY);
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_KEY, // Ensure this matches the variable in your `.env` file
+  apiKey: process.env.OPENAI_KEY,
 });
 
 const mockResponse = {

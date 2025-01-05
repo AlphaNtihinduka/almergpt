@@ -7,7 +7,7 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN!,
 });
 
-const USE_MOCK = false; // Set to false to use the real API.
+const USE_MOCK = false; 
 
 // Helper function: Convert ReadableStream to Base64
 async function streamToBase64(stream: ReadableStream) {
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
 
     const input = { prompt_a: prompt };
 
-    // Get the response from Replicate API
+    
     const response = USE_MOCK
       ? {
           audio: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
           { input }
         )) as { audio: ReadableStream | string; metadata: object };
 
-    // Convert ReadableStream to Base64
+    
     if (response.audio instanceof ReadableStream) {
       const base64Audio = await streamToBase64(response.audio);
       return new Response(
