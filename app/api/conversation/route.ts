@@ -1,21 +1,23 @@
 import OpenAI from "openai";
 import { auth } from "@clerk/nextjs/server";
 
-// console.log("OPENAI_API_KEY:", process.env.OPENAI_KEY);
+console.log("OPENAI_API_KEY:", process.env.OPENAI_KEY);
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_KEY,
 });
-
-const mockResponse = {
-    choices: [
-      { message: { role: "assistant", content: "This is a mock response." } },
-    ],
-  };
 
 export async function POST(req: Request) {
   try {
     // Authenticate the user
     const { userId } = await auth();
+    
+    // Check if user is authenticated
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     // Parse the request body
     const body = await req.json();
@@ -29,25 +31,57 @@ export async function POST(req: Request) {
       );
     }
 
-    // Call OpenAI API
-    const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages,
-      max_tokens: 2,
-    });
+    // Validate message format
+    const isValidMessages = messages.every(msg => 
+      msg && typeof msg === 'object' && 
+      msg.role && msg.content &&
+      ['system', 'user', 'assistant'].includes(msg.role)
+    );
 
-    // const response = mockResponse;
+    if (!isValidMessages) {
+      return new Response(
+        JSON.stringify({ error: "Invalid message structure. Each message must have 'role' and 'content' properties." }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // Call OpenAI API with appropriate settings for conversation
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages,
+      max_tokens: 1000, // Increased from 2 to allow proper responses
+      temperature: 0.7, // Add some creativity
+      top_p: 1,
+      frequency_penalty: 0,
+      presence_penalty: 0,
+    });
 
     // Extract the reply
     const reply = response.choices?.[0]?.message?.content || "No response received.";
 
-    // Return the response
+    // Return the response in the expected format
     return new Response(
-      JSON.stringify({ role: "assistant", content: reply }),
+      JSON.stringify({ 
+        role: "assistant", 
+        content: reply.trim(),
+        usage: response.usage // Include token usage info
+      }),
       { status: 200, headers: { "Content-Type": "application/json" } }
     );
   } catch (error) {
     console.error("API Error:", error);
+
+    // More specific error handling
+    if (error instanceof OpenAI.APIError) {
+      return new Response(
+        JSON.stringify({ 
+          error: "OpenAI API Error", 
+          message: error.message,
+          status: error.status 
+        }),
+        { status: error.status || 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     return new Response(
       JSON.stringify({ error: "Internal Server Error" }),
