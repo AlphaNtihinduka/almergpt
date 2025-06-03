@@ -191,7 +191,7 @@ const ImagePage = () => {
 
       toast.error(`Generation failed: ${errorMessage}`);
     }
-  }, [handleApiError, simulateProgress, toast, formMethods]);
+  }, [handleApiError, simulateProgress, formMethods]);
 
   // Retry mechanism
   const handleRetry = useCallback(() => {
@@ -218,12 +218,12 @@ const ImagePage = () => {
     } catch {
       toast.error("Download failed: Could not download the image");
     }
-  }, [toast]);
+  }, []);
 
   const copyPrompt = useCallback((prompt: string) => {
     navigator.clipboard.writeText(prompt);
     toast("Copied to clipboard. Prompt has been copied");
-  }, [toast]);
+  }, []);
 
   const toggleFavorite = useCallback((imageId: string) => {
     setImages(prev => prev.map(img => 
@@ -236,7 +236,7 @@ const ImagePage = () => {
   const deleteImage = useCallback((imageId: string) => {
     setImages(prev => prev.filter(img => img.id !== imageId));
     toast("Image deleted successfully");
-  }, [toast]);
+  }, []);
 
   const shareImage = useCallback((image: GeneratedImage) => {
     if (navigator.share) {
@@ -249,7 +249,7 @@ const ImagePage = () => {
       navigator.clipboard.writeText(image.url);
       toast("Image URL copied to clipboard. You can share it manually.");
     }
-  }, [toast]);
+  }, []);
 
   // Keyboard shortcuts
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
