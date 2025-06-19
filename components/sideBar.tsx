@@ -1,13 +1,13 @@
 "use client"
 import Link from "next/link";
 import Image from "next/image";
-import { 
+import {
     Code,
-    ImageIcon, 
-    LayoutDashboard, 
-    MessageSquare, 
-    Music, 
-    Settings, 
+    ImageIcon,
+    LayoutDashboard,
+    MessageSquare,
+    Music,
+    Settings,
     VideoIcon,
     Sparkles,
     ChevronRight,
@@ -84,7 +84,7 @@ const routes = [
 
 const SideBar = () => {
     const pathname = usePathname();
-    
+
     return (
         <div className="relative flex flex-col h-full bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 border-r border-slate-700/50 backdrop-blur-xl">
             {/* Ambient background effects */}
@@ -96,8 +96,8 @@ const SideBar = () => {
             <div className="relative z-10 flex flex-col h-full">
                 {/* Header Section */}
                 <div className="p-6 border-b border-slate-700/50">
-                    <Link 
-                        href="/dashboard" 
+                    <Link
+                        href="/"
                         className="group flex items-center gap-4 p-3 rounded-xl hover:bg-white/5 transition-all duration-300"
                     >
                         <div className="relative">
@@ -130,15 +130,15 @@ const SideBar = () => {
                     {routes.map((route, index) => {
                         const isActive = pathname === route.href;
                         const isSettings = route.href === "/settings";
-                        
+
                         return (
                             <div key={route.href} className="relative">
                                 <Link
                                     href={route.href}
                                     className={cn(
                                         "group relative flex items-center gap-4 p-4 rounded-xl transition-all duration-300 overflow-hidden",
-                                        isActive 
-                                            ? "bg-white/10 text-white shadow-lg shadow-black/20" 
+                                        isActive
+                                            ? "bg-white/10 text-white shadow-lg shadow-black/20"
                                             : "text-slate-400 hover:text-white hover:bg-white/5"
                                     )}
                                 >
@@ -170,7 +170,7 @@ const SideBar = () => {
                                                 route.bgGlow
                                             )}></div>
                                         )}
-                                        
+
                                         <route.icon className={cn(
                                             "relative w-5 h-5 transition-all duration-300",
                                             isActive ? route.color : "text-slate-500 group-hover:text-slate-300"
