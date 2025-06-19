@@ -1,7 +1,6 @@
 import OpenAI from "openai";
 import { auth } from "@clerk/nextjs/server";
 
-console.log("OPENAI_API_KEY:", process.env.OPENAI_KEY);
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_KEY,
 });
