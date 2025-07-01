@@ -1,19 +1,34 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import Replicate from "replicate";
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
+import Redis from "ioredis";
 
-// Initialize Replicate client
+// Initialize clients
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN!,
 });
 
+// Redis for caching and queue management
+const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
+
 // Configuration
 const USE_MOCK = process.env.NODE_ENV === "development" && process.env.USE_MOCK_VIDEO === "true";
 const MAX_PROMPT_LENGTH = 500;
-const GENERATION_TIMEOUT = 300000; // 5 minutes
+const CACHE_TTL = 3600; // 1 hour cache
+const MAX_CONCURRENT_GENERATIONS = 10;
+const QUEUE_KEY = "video_generation_queue";
+const ACTIVE_JOBS_KEY = "active_video_jobs";
 
-// Input validation schema
+// Faster model versions (using more recent/optimized models)
+const VIDEO_MODELS = {
+  fast: "bytedance/seedance-1-lite", // SVD - faster
+  quality: "minimax/video-01", // Original
+  ultra_fast: "kwaivgi/kling-v2.1-master" // AnimateDiff - very fast
+};
+
+// Input validation with optimized defaults
 interface VideoGenerationInput {
   prompt: string;
   fps?: number;
@@ -22,15 +37,19 @@ interface VideoGenerationInput {
   guidance_scale?: number;
   negative_prompt?: string;
   duration?: number;
+  priority?: 'fast' | 'quality' | 'ultra_fast';
+  num_inference_steps?: number;
 }
 
-// Response interfaces
 interface VideoGenerationResponse {
   success: boolean;
   video?: string;
   predictionId?: string;
   status?: string;
   error?: string;
+  queuePosition?: number;
+  estimatedWaitTime?: number;
+  cached?: boolean;
   metadata?: {
     duration?: string;
     format?: string;
@@ -39,15 +58,66 @@ interface VideoGenerationResponse {
   };
 }
 
-// Validate and sanitize input
+// Generate cache key for similar prompts
+function generateCacheKey(input: VideoGenerationInput): string {
+  const key = `video:${input.prompt}:${input.width}x${input.height}:${input.fps}:${input.duration}:${input.priority}`;
+  return Buffer.from(key).toString('base64').slice(0, 50);
+}
+
+// Check cache first
+async function checkCache(cacheKey: string): Promise<string | null> {
+  try {
+    return await redis.get(cacheKey);
+  } catch (error) {
+    console.warn("Cache check failed:", error);
+    return null;
+  }
+}
+
+// Store in cache
+async function storeInCache(cacheKey: string, videoUrl: string): Promise<void> {
+  try {
+    await redis.setex(cacheKey, CACHE_TTL, videoUrl);
+  } catch (error) {
+    console.warn("Cache store failed:", error);
+  }
+}
+
+// Queue management
+async function getQueuePosition(userId: string): Promise<number> {
+  try {
+    const position = await redis.lpos(QUEUE_KEY, userId);
+    return position !== null ? position : -1;
+  } catch {
+    return -1;
+  }
+}
+
+async function addToQueue(userId: string, input: VideoGenerationInput): Promise<number> {
+  try {
+    await redis.lpush(QUEUE_KEY, JSON.stringify({ userId, input, timestamp: Date.now() }));
+    return await redis.llen(QUEUE_KEY);
+  } catch {
+    return 0;
+  }
+}
+
+async function getActiveJobsCount(): Promise<number> {
+  try {
+    return await redis.scard(ACTIVE_JOBS_KEY);
+  } catch {
+    return 0;
+  }
+}
+
+// Validate and optimize input
 function validateInput(body: any): { isValid: boolean; error?: string; data?: VideoGenerationInput } {
   if (!body || typeof body !== "object") {
     return { isValid: false, error: "Invalid request body" };
   }
 
-  const { prompt, fps, width, height, guidance_scale, negative_prompt, duration } = body;
+  const { prompt, fps, width, height, guidance_scale, negative_prompt, duration, priority, num_inference_steps } = body;
 
-  // Validate prompt
   if (!prompt || typeof prompt !== "string") {
     return { isValid: false, error: "Prompt is required and must be a string" };
   }
@@ -60,39 +130,54 @@ function validateInput(body: any): { isValid: boolean; error?: string; data?: Vi
     return { isValid: false, error: `Prompt must be less than ${MAX_PROMPT_LENGTH} characters` };
   }
 
-  // Validate optional parameters
+  // Optimized defaults for speed
   const validatedData: VideoGenerationInput = {
     prompt: prompt.trim(),
-    fps: fps && typeof fps === "number" && fps > 0 && fps <= 60 ? fps : 24,
-    width: width && typeof width === "number" && width > 0 ? Math.min(width, 1920) : 1024,
-    height: height && typeof height === "number" && height > 0 ? Math.min(height, 1080) : 576,
-    guidance_scale: guidance_scale && typeof guidance_scale === "number" ? Math.max(1, Math.min(guidance_scale, 20)) : 17.5,
-    negative_prompt: negative_prompt && typeof negative_prompt === "string" ? negative_prompt.trim() : "very blue, dust, noisy, washed out, ugly, distorted, broken",
-    duration: duration && typeof duration === "number" && duration > 0 ? Math.min(duration, 10) : 3
+    fps: fps && typeof fps === "number" && fps > 0 && fps <= 30 ? fps : 15, // Lower default FPS for speed
+    width: width && typeof width === "number" && width > 0 ? Math.min(width, 1024) : 512, // Smaller default resolution
+    height: height && typeof height === "number" && height > 0 ? Math.min(height, 1024) : 512,
+    guidance_scale: guidance_scale && typeof guidance_scale === "number" ? Math.max(1, Math.min(guidance_scale, 15)) : 7.5, // Lower for speed
+    negative_prompt: negative_prompt && typeof negative_prompt === "string" ? negative_prompt.trim() : "blurry, low quality",
+    duration: duration && typeof duration === "number" && duration > 0 ? Math.min(duration, 5) : 2, // Shorter default duration
+    priority: priority && ['fast', 'quality', 'ultra_fast'].includes(priority) ? priority : 'ultra_fast',
+    num_inference_steps: num_inference_steps && typeof num_inference_steps === "number" ? Math.min(num_inference_steps, 50) : 20 // Fewer steps for speed
   };
 
   return { isValid: true, data: validatedData };
 }
 
-// Mock response for development
+// Mock response
 function getMockResponse(): VideoGenerationResponse {
   return {
     success: true,
     video: "/braveboy.mp4",
     status: "succeeded",
+    cached: false,
     metadata: {
-      duration: "3:45",
+      duration: "2s",
       format: "mp4",
-      resolution: "1024x576",
-      fps: 24
+      resolution: "512x512",
+      fps: 15
     }
   };
 }
 
-// Generate video using Replicate
-async function generateVideo(input: VideoGenerationInput): Promise<VideoGenerationResponse> {
+// Optimized video generation with queue processing
+async function generateVideo(input: VideoGenerationInput, userId: string): Promise<VideoGenerationResponse> {
+  const jobId = `${userId}_${Date.now()}`;
+
   try {
-    console.log("Starting video generation with input:", { ...input, prompt: input.prompt.substring(0, 100) + "..." });
+    // Add to active jobs
+    await redis.sadd(ACTIVE_JOBS_KEY, jobId);
+
+    console.log("Starting optimized video generation:", {
+      jobId,
+      prompt: input.prompt.substring(0, 50) + "...",
+      priority: input.priority
+    });
+
+    // Choose model based on priority
+    const modelVersion = VIDEO_MODELS[input.priority!];
 
     const replicateInput = {
       fps: input.fps!,
@@ -101,52 +186,27 @@ async function generateVideo(input: VideoGenerationInput): Promise<VideoGenerati
       prompt: input.prompt,
       guidance_scale: input.guidance_scale!,
       negative_prompt: input.negative_prompt!,
-      // Add more parameters as needed
-      num_inference_steps: 50,
-      seed: Math.floor(Math.random() * 1000000), // Random seed for variety
+      num_inference_steps: input.num_inference_steps!,
+      seed: Math.floor(Math.random() * 100000),
+      // Optimization parameters
+      scheduler: "DPMSolverMultistep", // Faster scheduler
+      enable_memory_efficient_attention: true,
     };
 
-    // Start the prediction
+    // Start async prediction (non-blocking)
     const prediction = await replicate.predictions.create({
-      version: "anotherjesse/zeroscope-v2-xl:9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351",
+      version: modelVersion,
       input: replicateInput,
     });
 
     console.log("Prediction started:", prediction.id);
 
-    // Poll for completion with timeout
-    const startTime = Date.now();
-    let completedPrediction = prediction;
-
-    while (completedPrediction.status !== "succeeded" && completedPrediction.status !== "failed") {
-      if (Date.now() - startTime > GENERATION_TIMEOUT) {
-        throw new Error("Video generation timeout");
-      }
-
-      // Wait before polling again
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      completedPrediction = await replicate.predictions.get(prediction.id);
-      console.log("Prediction status:", completedPrediction.status);
-    }
-
-    if (completedPrediction.status === "failed") {
-      throw new Error(typeof completedPrediction.error === "string" ? completedPrediction.error : "Video generation failed");
-    }
-
-    const videoUrl = Array.isArray(completedPrediction.output) 
-      ? completedPrediction.output[0] 
-      : completedPrediction.output;
-
-    if (!videoUrl) {
-      throw new Error("No video URL in response");
-    }
-
+    // Return immediately with prediction ID for client polling
     return {
       success: true,
-      video: videoUrl,
       predictionId: prediction.id,
-      status: completedPrediction.status,
+      status: "processing",
+      estimatedWaitTime: getEstimatedWaitTime(input.priority!),
       metadata: {
         format: "mp4",
         resolution: `${input.width}x${input.height}`,
@@ -161,12 +221,26 @@ async function generateVideo(input: VideoGenerationInput): Promise<VideoGenerati
       error: error instanceof Error ? error.message : "Unknown error occurred",
       status: "failed"
     };
+  } finally {
+    // Remove from active jobs
+    await redis.srem(ACTIVE_JOBS_KEY, jobId);
   }
 }
 
+// Get estimated wait time based on priority and queue
+function getEstimatedWaitTime(priority: string): number {
+  const baseTimes = {
+    ultra_fast: 15, // 15 seconds
+    fast: 30,       // 30 seconds  
+    quality: 60     // 1 minute
+  };
+  return baseTimes[priority as keyof typeof baseTimes] || 30;
+}
+
+// Main POST handler - now async and non-blocking
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    // Check authentication
+    // Auth check
     const { userId } = await auth();
     if (!userId) {
       return NextResponse.json(
@@ -175,7 +249,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Check for required environment variables
+    // Environment check
     if (!USE_MOCK && !process.env.REPLICATE_API_TOKEN) {
       console.error("REPLICATE_API_TOKEN is not set");
       return NextResponse.json(
@@ -184,7 +258,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Parse and validate request body
+    // Parse request
     let body;
     try {
       body = await req.json();
@@ -195,6 +269,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
+    // Validate input
     const validation = validateInput(body);
     if (!validation.isValid) {
       return NextResponse.json(
@@ -205,40 +280,67 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const validatedInput = validation.data!;
 
-    // Generate video
-    const result = USE_MOCK 
-      ? getMockResponse()
-      : await generateVideo(validatedInput);
+    // Check cache first
+    const cacheKey = generateCacheKey(validatedInput);
+    const cachedVideo = await checkCache(cacheKey);
 
-    if (!result.success) {
-      return NextResponse.json(
-        { success: false, error: result.error },
-        { status: 500 }
-      );
+    if (cachedVideo) {
+      console.log("Cache hit for user:", userId);
+      return NextResponse.json({
+        success: true,
+        video: cachedVideo,
+        status: "succeeded",
+        cached: true,
+        metadata: {
+          format: "mp4",
+          resolution: `${validatedInput.width}x${validatedInput.height}`,
+          fps: validatedInput.fps
+        }
+      });
     }
 
-    // Log successful generation
-    console.log("Video generated successfully:", {
-      userId,
-      videoUrl: result.video?.substring(0, 100) + "...",
-      predictionId: result.predictionId
-    });
+    // Check if we're at capacity
+    const activeJobs = await getActiveJobsCount();
+    if (activeJobs >= MAX_CONCURRENT_GENERATIONS) {
+      const queuePosition = await addToQueue(userId, validatedInput);
+      return NextResponse.json({
+        success: true,
+        status: "queued",
+        queuePosition,
+        estimatedWaitTime: queuePosition * 10, // 10 seconds per position
+        message: "Request queued due to high demand"
+      });
+    }
+
+    // Generate video (async)
+    const result = USE_MOCK
+      ? getMockResponse()
+      : await generateVideo(validatedInput, userId);
+
+    // For successful generations, we return the prediction ID for polling
+    if (result.success && result.predictionId) {
+      // Cache successful results would be handled in the GET endpoint
+      console.log("Video generation initiated:", {
+        userId,
+        predictionId: result.predictionId
+      });
+    }
 
     return NextResponse.json(result, { status: 200 });
 
   } catch (error) {
     console.error("API Error:", error);
     return NextResponse.json(
-      { 
-        success: false, 
-        error: "Internal server error" 
+      {
+        success: false,
+        error: "Internal server error"
       },
       { status: 500 }
     );
   }
 }
 
-// Optional: Add GET endpoint to check prediction status
+// Enhanced GET endpoint for real-time status checking
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     const { userId } = await auth();
@@ -267,14 +369,51 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       });
     }
 
+    // Get prediction status
     const prediction = await replicate.predictions.get(predictionId);
-    
-    return NextResponse.json({
+
+    let videoUrl = null;
+    if (prediction.status === "succeeded") {
+      videoUrl = Array.isArray(prediction.output)
+        ? prediction.output[0]
+        : prediction.output;
+
+      // Cache successful result
+      if (videoUrl) {
+        const prompt = searchParams.get("prompt");
+        if (prompt) {
+          const cacheKey = generateCacheKey({
+            prompt,
+            width: parseInt(searchParams.get("width") || "512"),
+            height: parseInt(searchParams.get("height") || "512"),
+            fps: parseInt(searchParams.get("fps") || "15"),
+            duration: parseInt(searchParams.get("duration") || "2"),
+            priority: searchParams.get("priority") as any || "ultra_fast"
+          });
+          await storeInCache(cacheKey, videoUrl);
+        }
+      }
+    }
+
+    const response: VideoGenerationResponse = {
       success: true,
       status: prediction.status,
-      video: prediction.output,
-      error: prediction.error
-    });
+      video: videoUrl,
+      error: prediction.error ? String(prediction.error) : undefined
+    };
+
+    // Add progress information if available
+    if (prediction.status === "processing" && prediction.logs) {
+      const logs = Array.isArray(prediction.logs) ? prediction.logs.join("\n") : prediction.logs;
+      if (logs.includes("%")) {
+        const progressMatch = logs.match(/(\d+)%/);
+        if (progressMatch) {
+          (response as any).progress = parseInt(progressMatch[1]);
+        }
+      }
+    }
+
+    return NextResponse.json(response);
 
   } catch (error) {
     console.error("Status check error:", error);
