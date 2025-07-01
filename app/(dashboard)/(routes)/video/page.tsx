@@ -1,7 +1,7 @@
 "use client";
 
 import Heading from "@/components/heading";
-import { VideoIcon, Settings, Download, Play, AlertCircle } from "lucide-react";
+import { VideoIcon, Settings, Download, Play, AlertCircle, Clock, Users, Zap, Sparkles, Eye, Timer } from "lucide-react";
 import { useForm, FormProvider } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,29 +14,38 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Badge } from "@/components/ui/badge";
+// import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import axios from "axios";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import Empty from "@/components/empty";
 import Loader from "@/components/loader";
 
-// Enhanced form schema with additional parameters
+// Enhanced form schema with priority
 const formSchema = z.object({
   prompt: z.string().min(1, "Prompt is required").max(500, "Prompt must be less than 500 characters"),
-  fps: z.number().min(12).max(60).default(24),
-  width: z.number().min(256).max(1920).default(1024),
-  height: z.number().min(256).max(1080).default(576),
-  guidance_scale: z.number().min(1).max(20).default(17.5),
-  negative_prompt: z.string().default("very blue, dust, noisy, washed out, ugly, distorted, broken"),
-  duration: z.number().min(1).max(10).default(3)
+  fps: z.number().min(12).max(30).default(15),
+  width: z.number().min(256).max(1024).default(512),
+  height: z.number().min(256).max(1024).default(512),
+  guidance_scale: z.number().min(1).max(15).default(7.5),
+  negative_prompt: z.string().default("blurry, low quality"),
+  duration: z.number().min(1).max(5).default(2),
+  priority: z.enum(["ultra_fast", "fast", "quality"]).default("ultra_fast"),
+  num_inference_steps: z.number().min(10).max(50).default(20)
 });
 
-// API Response types
+// Enhanced API Response types
 interface VideoGenerationResponse {
   success: boolean;
   video?: string;
   predictionId?: string;
   status?: string;
   error?: string;
+  queuePosition?: number;
+  estimatedWaitTime?: number;
+  cached?: boolean;
+  progress?: number;
+  message?: string;
   metadata?: {
     duration?: string;
     format?: string;
@@ -45,13 +54,36 @@ interface VideoGenerationResponse {
   };
 }
 
-// Preset configurations
+// Optimized presets for speed
 const presets = {
-  standard: { fps: 24, width: 1024, height: 576, guidance_scale: 17.5 },
-  hd: { fps: 30, width: 1280, height: 720, guidance_scale: 15 },
-  cinematic: { fps: 24, width: 1920, height: 1080, guidance_scale: 20 },
-  square: { fps: 24, width: 1024, height: 1024, guidance_scale: 17.5 },
+  ultra_fast: {
+    fps: 15, width: 512, height: 512, guidance_scale: 7.5,
+    priority: "ultra_fast" as const, num_inference_steps: 15, duration: 2
+  }
 };
+
+// Sample prompts for inspiration
+const samplePrompts = [
+  "A majestic eagle soaring over snow-capped mountains at golden hour",
+  "Waves crashing against rocky cliffs during a storm",
+  "A cat playing with butterflies in a sunny garden",
+  "Northern lights dancing over a frozen lake",
+  "Steam rising from a hot cup of coffee on a rainy day",
+  "Fireflies glowing in a magical forest at twilight",
+  "A paper airplane floating through clouds",
+  "Raindrops creating ripples on a calm pond"
+];
+
+// Fun facts to display while waiting
+const funFacts = [
+  "AI can generate a 3-second video in about 15 seconds!",
+  "The first AI-generated video was created in 2016",
+  "Your video is being created by analyzing millions of video frames",
+  "AI video models can understand physics and motion",
+  "Each frame is generated individually and then combined smoothly",
+  "The AI is creating approximately 45 individual frames for your video",
+  "Video AI models are trained on thousands of hours of footage"
+];
 
 const VideoPage = () => {
   const [video, setVideo] = useState<string>();
@@ -61,34 +93,82 @@ const VideoPage = () => {
   const [predictionId, setPredictionId] = useState<string>();
   const [metadata, setMetadata] = useState<VideoGenerationResponse['metadata']>();
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [queuePosition, setQueuePosition] = useState<number>();
+  const [estimatedWaitTime, setEstimatedWaitTime] = useState<number>();
+  const [currentFunFact, setCurrentFunFact] = useState(0);
+  const [timeElapsed, setTimeElapsed] = useState(0);
+  const [isQueued, setIsQueued] = useState(false);
+  const [generationStartTime, setGenerationStartTime] = useState<number>();
+  const [cachedResult, setCachedResult] = useState(false);
+
+  const intervalRef = useRef<NodeJS.Timeout>();
+  const factIntervalRef = useRef<NodeJS.Timeout>();
+  const timeElapsedRef = useRef<NodeJS.Timeout>();
 
   const formMethods = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       prompt: "",
-      fps: 24,
-      width: 1024,
-      height: 576,
-      guidance_scale: 17.5,
-      negative_prompt: "very blue, dust, noisy, washed out, ugly, distorted, broken",
-      duration: 3
+      fps: 15,
+      width: 512,
+      height: 512,
+      guidance_scale: 7.5,
+      negative_prompt: "blurry, low quality",
+      duration: 2,
+      priority: "ultra_fast",
+      num_inference_steps: 20
     },
   });
 
-  // Poll for video generation status
-  const pollStatus = useCallback(async (predictionId: string) => {
-    const maxAttempts = 60; // 5 minutes with 5-second intervals
+  // Cleanup intervals
+  const cleanupIntervals = useCallback(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (factIntervalRef.current) clearInterval(factIntervalRef.current);
+    if (timeElapsedRef.current) clearInterval(timeElapsedRef.current);
+  }, []);
+
+  // Enhanced polling with better UX
+  const pollStatus = useCallback(async (predictionId: string, formValues: z.infer<typeof formSchema>) => {
+    const maxAttempts = 120; // 10 minutes with 5-second intervals
     let attempts = 0;
+    let lastProgress = 0;
+
+    // Start fun facts rotation
+    factIntervalRef.current = setInterval(() => {
+      setCurrentFunFact(prev => (prev + 1) % funFacts.length);
+    }, 4000);
+
+    // Start elapsed time counter
+    timeElapsedRef.current = setInterval(() => {
+      setTimeElapsed(prev => prev + 1);
+    }, 1000);
 
     const poll = async () => {
       try {
-        const response = await axios.get(`/api/video?predictionId=${predictionId}`);
+        const params = new URLSearchParams({
+          predictionId,
+          prompt: formValues.prompt,
+          width: formValues.width.toString(),
+          height: formValues.height.toString(),
+          fps: formValues.fps.toString(),
+          duration: formValues.duration.toString(),
+          priority: formValues.priority
+        });
+
+        const response = await axios.get(`/api/video?${params}`);
         const data: VideoGenerationResponse = response.data;
 
         if (data.success && data.status === "succeeded" && data.video) {
           setVideo(data.video);
           setProgress(100);
           setIsGenerating(false);
+          setIsQueued(false);
+          cleanupIntervals();
+
+          if (generationStartTime) {
+            const totalTime = Math.round((Date.now() - generationStartTime) / 1000);
+            console.log(`Video generated in ${totalTime} seconds`);
+          }
           return;
         }
 
@@ -96,36 +176,59 @@ const VideoPage = () => {
           throw new Error(data.error || "Video generation failed");
         }
 
-        // Update progress based on attempts
-        setProgress(Math.min((attempts / maxAttempts) * 90, 90));
+        // Enhanced progress calculation
+        let newProgress = lastProgress;
+
+        if (data.progress !== undefined) {
+          newProgress = data.progress;
+        } else if (data.status === "processing") {
+          // Estimate progress based on time and priority
+          const timeProgress = Math.min((attempts * 5) / (estimatedWaitTime || 30) * 80, 80);
+          newProgress = Math.max(timeProgress, lastProgress + 2);
+        } else {
+          newProgress = Math.min(lastProgress + 1, 90);
+        }
+
+        setProgress(Math.min(newProgress, 95));
+        lastProgress = newProgress;
         attempts++;
 
         if (attempts < maxAttempts) {
-          setTimeout(poll, 5000); // Poll every 5 seconds
+          intervalRef.current = setTimeout(poll, 5000);
         } else {
-          throw new Error("Video generation timeout");
+          throw new Error("Video generation timeout - please try again");
         }
       } catch (error) {
         console.error("Polling error:", error);
         setError(error instanceof Error ? error.message : "Failed to check generation status");
         setIsGenerating(false);
+        setIsQueued(false);
         setProgress(0);
+        cleanupIntervals();
       }
     };
 
+    // Start polling immediately
     poll();
-  }, []);
+  }, [cleanupIntervals, estimatedWaitTime, generationStartTime]);
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
+      // Reset state
       setVideo(undefined);
       setError(undefined);
       setIsGenerating(true);
-      setProgress(10);
+      setIsQueued(false);
+      setProgress(5);
       setPredictionId(undefined);
       setMetadata(undefined);
+      setQueuePosition(undefined);
+      setEstimatedWaitTime(undefined);
+      setTimeElapsed(0);
+      setCachedResult(false);
+      setGenerationStartTime(Date.now());
 
-      console.log("Submitting video generation request:", values);
+      console.log("Submitting optimized video generation request:", values);
 
       const response = await axios.post("/api/video", values);
       const data: VideoGenerationResponse = response.data;
@@ -134,13 +237,54 @@ const VideoPage = () => {
         throw new Error(data.error || "Video generation failed");
       }
 
-      setProgress(20);
+      // Handle cached results
+      if (data.cached && data.video) {
+        setVideo(data.video);
+        setProgress(100);
+        setIsGenerating(false);
+        setCachedResult(true);
+        setMetadata(data.metadata);
+        return;
+      }
+
+      // Handle queue status
+      if (data.status === "queued") {
+        setIsQueued(true);
+        setQueuePosition(data.queuePosition);
+        setEstimatedWaitTime(data.estimatedWaitTime);
+        setProgress(10);
+
+        // Start polling for queue status
+        const checkQueue = async () => {
+          try {
+            const queueResponse = await axios.post("/api/video", values);
+            const queueData: VideoGenerationResponse = queueResponse.data;
+
+            if (queueData.predictionId) {
+              setIsQueued(false);
+              setPredictionId(queueData.predictionId);
+              setEstimatedWaitTime(queueData.estimatedWaitTime);
+              pollStatus(queueData.predictionId, values);
+            } else if (queueData.status === "queued") {
+              setQueuePosition(queueData.queuePosition);
+              setTimeout(checkQueue, 5000);
+            }
+          } catch (error) {
+            console.error("Queue check error:", error);
+          }
+        };
+
+        setTimeout(checkQueue, 5000);
+        return;
+      }
+
+      setProgress(15);
       setMetadata(data.metadata);
+      setEstimatedWaitTime(data.estimatedWaitTime);
 
       if (data.predictionId) {
         setPredictionId(data.predictionId);
-        // Start polling for status
-        pollStatus(data.predictionId);
+        pollStatus(data.predictionId, values);
       } else if (data.video) {
         // Direct response (mock mode)
         setVideo(data.video);
@@ -150,7 +294,6 @@ const VideoPage = () => {
 
     } catch (error) {
       console.error("Error during submission:", error);
-      // Check if error is an AxiosError to access response
       if (axios.isAxiosError(error)) {
         setError(
           error.response?.data?.error ||
@@ -158,319 +301,441 @@ const VideoPage = () => {
           "An unexpected error occurred"
         );
       } else if (error instanceof Error) {
-        setError(
-          error.message ||
-          "An unexpected error occurred"
-        );
+        setError(error.message || "An unexpected error occurred");
       } else {
         setError("An unexpected error occurred");
       }
       setIsGenerating(false);
+      setIsQueued(false);
       setProgress(0);
+      cleanupIntervals();
     }
   };
 
   const applyPreset = (presetName: keyof typeof presets) => {
     const preset = presets[presetName];
-    formMethods.setValue("fps", preset.fps);
-    formMethods.setValue("width", preset.width);
-    formMethods.setValue("height", preset.height);
-    formMethods.setValue("guidance_scale", preset.guidance_scale);
+    Object.entries(preset).forEach(([key, value]) => {
+      formMethods.setValue(key as keyof z.infer<typeof formSchema>, value);
+    });
+  };
+
+  const handleSamplePrompt = (prompt: string) => {
+    formMethods.setValue("prompt", prompt);
   };
 
   const downloadVideo = () => {
     if (video) {
       const link = document.createElement('a');
       link.href = video;
-      link.download = `generated-video-${Date.now()}.mp4`;
+      link.download = `ai-video-${Date.now()}.mp4`;
       link.click();
     }
   };
 
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => cleanupIntervals();
+  }, [cleanupIntervals]);
+
   return (
     <div>
       <Heading
-        title="Video Generation"
-        description="Create amazing videos with AI"
+        title="AI Video Generation"
+        description="Create stunning videos with AI in seconds"
         icon={VideoIcon}
         iconColor="text-orange-700"
         bgColor="bg-orange-700/10"
       />
-      
+
       <div className="px-4 lg:px-8">
         <FormProvider {...formMethods}>
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <VideoIcon className="w-5 h-5" />
-                Video Settings
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={formMethods.handleSubmit(onSubmit)} className="space-y-6">
-                {/* Main Prompt */}
-                <FormField
-                  name="prompt"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Video Prompt</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Describe the video you want to generate (e.g., 'A majestic eagle soaring over snow-capped mountains at golden hour')"
-                          disabled={isGenerating}
-                          rows={3}
-                          {...field}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                {/* Quick Presets */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => applyPreset("standard")}
-                    disabled={isGenerating}
-                  >
-                    Standard
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => applyPreset("hd")}
-                    disabled={isGenerating}
-                  >
-                    HD
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => applyPreset("cinematic")}
-                    disabled={isGenerating}
-                  >
-                    Cinematic
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => applyPreset("square")}
-                    disabled={isGenerating}
-                  >
-                    Square
-                  </Button>
-                </div>
-
-                {/* Advanced Settings */}
-                <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
-                  <CollapsibleTrigger asChild>
-                    <Button type="button" variant="ghost" className="w-full justify-between">
-                      <span className="flex items-center gap-2">
-                        <Settings className="w-4 h-4" />
-                        Advanced Settings
-                      </span>
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-4 mt-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      <FormField
-                        name="fps"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Frame Rate (FPS)</FormLabel>
-                            <Select
-                              disabled={isGenerating}
-                              onValueChange={(value) => field.onChange(parseInt(value))}
-                              value={field.value.toString()}
-                            >
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                <SelectItem value="12">12 FPS</SelectItem>
-                                <SelectItem value="24">24 FPS</SelectItem>
-                                <SelectItem value="30">30 FPS</SelectItem>
-                                <SelectItem value="60">60 FPS</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        name="width"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Width</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                min={256}
-                                max={1920}
-                                step={64}
-                                disabled={isGenerating}
-                                {...field}
-                                onChange={(e) => field.onChange(parseInt(e.target.value))}
-                              />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        name="height"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Height</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                min={256}
-                                max={1080}
-                                step={64}
-                                disabled={isGenerating}
-                                {...field}
-                                onChange={(e) => field.onChange(parseInt(e.target.value))}
-                              />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        name="guidance_scale"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Guidance Scale</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                min={1}
-                                max={20}
-                                step={0.5}
-                                disabled={isGenerating}
-                                {...field}
-                                onChange={(e) => field.onChange(parseFloat(e.target.value))}
-                              />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        name="duration"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Duration (seconds)</FormLabel>
-                            <Select
-                              disabled={isGenerating}
-                              onValueChange={(value) => field.onChange(parseInt(value))}
-                              value={field.value.toString()}
-                            >
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                <SelectItem value="3">3 seconds</SelectItem>
-                                <SelectItem value="5">5 seconds</SelectItem>
-                                <SelectItem value="7">7 seconds</SelectItem>
-                                <SelectItem value="10">10 seconds</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Main Form */}
+            <div className="lg:col-span-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <VideoIcon className="w-5 h-5" />
+                    Video Settings
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={formMethods.handleSubmit(onSubmit)} className="space-y-6">
+                    {/* Prompt with samples */}
                     <FormField
-                      name="negative_prompt"
+                      name="prompt"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Negative Prompt</FormLabel>
+                          <FormLabel>Video Prompt</FormLabel>
                           <FormControl>
                             <Textarea
-                              placeholder="What you don't want in the video"
+                              placeholder="Describe your video..."
                               disabled={isGenerating}
-                              rows={2}
+                              rows={3}
                               {...field}
                             />
                           </FormControl>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {samplePrompts.slice(0, 3).map((prompt, index) => (
+                              <Button
+                                key={index}
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="text-xs"
+                                onClick={() => handleSamplePrompt(prompt)}
+                                disabled={isGenerating}
+                              >
+                                <Sparkles className="w-3 h-3 mr-1" />
+                                {prompt.substring(0, 20)}...
+                              </Button>
+                            ))}
+                          </div>
                         </FormItem>
                       )}
                     />
-                  </CollapsibleContent>
-                </Collapsible>
 
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={isGenerating}
-                  size="lg"
-                >
-                  {isGenerating ? (
-                    <>
-                      <Loader />
-                      Generating Video...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="mr-2 w-4 h-4" />
-                      Generate Video
-                    </>
-                  )}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+                    {/* Priority Selection */}
+                    <FormField
+                      name="priority"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Generation Speed</FormLabel>
+                          <Select
+                            disabled={isGenerating}
+                            onValueChange={field.onChange}
+                            value={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="ultra_fast">
+                                <div className="flex items-center gap-2">
+                                  <Zap className="w-4 h-4" />
+                                  Ultra Fast (~15s)
+                                </div>
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* Quick Presets */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => applyPreset("ultra_fast")}
+                        disabled={isGenerating}
+                      >
+                        <Zap className="w-3 h-3 mr-1" />
+                        Ultra Fast
+                      </Button>
+                    </div>
+
+                    {/* Advanced Settings */}
+                    <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
+                      <CollapsibleTrigger asChild>
+                        <Button type="button" variant="ghost" className="w-full justify-between">
+                          <span className="flex items-center gap-2">
+                            <Settings className="w-4 h-4" />
+                            Advanced Settings
+                          </span>
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-4 mt-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <FormField
+                            name="width"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Width</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    min={256}
+                                    max={1024}
+                                    step={64}
+                                    disabled={isGenerating}
+                                    {...field}
+                                    onChange={(e) => field.onChange(parseInt(e.target.value))}
+                                  />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            name="height"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Height</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    min={256}
+                                    max={1024}
+                                    step={64}
+                                    disabled={isGenerating}
+                                    {...field}
+                                    onChange={(e) => field.onChange(parseInt(e.target.value))}
+                                  />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            name="fps"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Frame Rate</FormLabel>
+                                <Select
+                                  disabled={isGenerating}
+                                  onValueChange={(value) => field.onChange(parseInt(value))}
+                                  value={field.value.toString()}
+                                >
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="12">12 FPS</SelectItem>
+                                    <SelectItem value="15">15 FPS</SelectItem>
+                                    <SelectItem value="20">20 FPS</SelectItem>
+                                    <SelectItem value="24">24 FPS</SelectItem>
+                                    <SelectItem value="30">30 FPS</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            name="duration"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Duration</FormLabel>
+                                <Select
+                                  disabled={isGenerating}
+                                  onValueChange={(value) => field.onChange(parseInt(value))}
+                                  value={field.value.toString()}
+                                >
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="2">2 seconds</SelectItem>
+                                    <SelectItem value="3">3 seconds</SelectItem>
+                                    <SelectItem value="4">4 seconds</SelectItem>
+                                    <SelectItem value="5">5 seconds</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+
+                        <FormField
+                          name="negative_prompt"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Negative Prompt</FormLabel>
+                              <FormControl>
+                                <Textarea
+                                  placeholder="What to avoid in the video"
+                                  disabled={isGenerating}
+                                  rows={2}
+                                  {...field}
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                      </CollapsibleContent>
+                    </Collapsible>
+
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      disabled={isGenerating}
+                      size="lg"
+                    >
+                      {isGenerating ? (
+                        <>
+                          <Loader />
+                          {isQueued ? "In Queue..." : "Generating..."}
+                        </>
+                      ) : (
+                        <>
+                          <Play className="mr-2 w-4 h-4" />
+                          Generate Video
+                        </>
+                      )}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Sidebar */}
+            <div className="space-y-6">
+              {/* Sample Prompts */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <Sparkles className="w-4 h-4" />
+                    Prompt Ideas
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {samplePrompts.slice(3, 6).map((prompt, index) => (
+                    <Button
+                      key={index}
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-left justify-start text-xs h-auto p-2"
+                      onClick={() => handleSamplePrompt(prompt)}
+                      disabled={isGenerating}
+                    >
+                      <Eye className="w-3 h-3 mr-2 flex-shrink-0" />
+                      <span className="truncate">{prompt}</span>
+                    </Button>
+                  ))}
+                </CardContent>
+              </Card>
+
+              {/* Generation Tips */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">💡 Tips</CardTitle>
+                </CardHeader>
+                <CardContent className="text-sm space-y-2">
+                  <p>• Be specific about actions and movements</p>
+                  <p>• Use &quot;Ultra Fast&quot; for quick previews</p>
+                  <p>• Describe lighting and mood</p>
+                  <p>• Keep prompts under 100 words</p>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </FormProvider>
 
-        {/* Progress and Status */}
-        {isGenerating && (
-          <Card className="mt-6">
-            <CardContent className="pt-6">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between text-sm">
-                  <span>Generating your video...</span>
-                  <span>{progress}%</span>
+        {/* Enhanced Progress Display */}
+        {
+          isGenerating && (
+            <Card className="mt-6">
+              <CardContent className="pt-6">
+                <div className="space-y-4">
+                  {/* Queue Status */}
+                  {isQueued && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <Users className="w-4 h-4" />
+                      <span>Position in queue: #{queuePosition}</span>
+                      {estimatedWaitTime && (
+                        <Badge variant="secondary">
+                          ~{Math.round(estimatedWaitTime / 60)}min wait
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Progress Bar */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span>
+                        {isQueued ? "Waiting in queue..." : "Generating your video..."}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-3 h-3" />
+                        <span>{formatTime(timeElapsed)}</span>
+                        <span>{progress}%</span>
+                      </div>
+                    </div>
+                    <Progress value={progress} className="w-full" />
+                  </div>
+
+                  {/* Fun Facts */}
+                  {!isQueued && (
+                    <div className="text-center p-4 bg-muted/50 rounded-lg">
+                      <p className="text-sm text-muted-foreground">
+                        <Sparkles className="w-4 h-4 inline mr-1" />
+                        {funFacts[currentFunFact]}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Prediction ID */}
+                  {predictionId && (
+                    <p className="text-xs text-muted-foreground text-center">
+                      ID: {predictionId.substring(0, 20)}...
+                    </p>
+                  )}
+
+                  {/* Estimated time remaining */}
+                  {estimatedWaitTime && !isQueued && (
+                    <div className="text-center">
+                      <Badge variant="outline">
+                        ~{Math.max(0, Math.round((estimatedWaitTime - timeElapsed) / 60))}min remaining
+                      </Badge>
+                    </div>
+                  )}
                 </div>
-                <Progress value={progress} className="w-full" />
-                {predictionId && (
-                  <p className="text-xs text-muted-foreground">
-                    Prediction ID: {predictionId}
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+              </CardContent>
+            </Card>
+          )
+        }
+
+        {/* Cached Result Notice */}
+        {
+          cachedResult && (
+            <Alert className="mt-6">
+              <Zap className="h-4 w-4" />
+              <AlertDescription>
+                Great news! We found a cached version of this video, so it was delivered instantly!
+              </AlertDescription>
+            </Alert>
+          )
+        }
 
         {/* Error Display */}
-        {error && (
-          <Alert variant="destructive" className="mt-6">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+        {
+          error && (
+            <Alert variant="destructive" className="mt-6">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )
+        }
 
         {/* Video Result */}
         <div className="mt-6">
           {!video && !isGenerating && !error && (
-            <Empty label="No video generated yet. Enter a prompt and click generate!" />
+            <Empty label="Ready to create amazing videos! Enter a prompt above to get started." />
           )}
-          
+
           {video && (
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>Generated Video</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  <VideoIcon className="w-5 h-5" />
+                  Your Generated Video
+                  {cachedResult && <Badge variant="secondary">Cached</Badge>}
+                </CardTitle>
                 <Button
                   variant="outline"
                   size="sm"
@@ -482,35 +747,42 @@ const VideoPage = () => {
                 </Button>
               </CardHeader>
               <CardContent>
-                <video 
-                  className="w-full aspect-video rounded-lg border bg-black" 
+                <video
+                  className="w-full aspect-video rounded-lg border bg-black"
                   controls
                   preload="metadata"
+                  autoPlay
+                  muted
+                  loop
                 >
                   <source src={video} type="video/mp4" />
                   Your browser does not support the video tag.
                 </video>
-                
+
                 {metadata && (
-                  <div className="mt-4 text-sm text-muted-foreground grid grid-cols-2 md:grid-cols-4 gap-2">
+                  <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     {metadata.resolution && (
-                      <div>
-                        <strong>Resolution:</strong> {metadata.resolution}
+                      <div className="flex items-center gap-2">
+                        <Eye className="w-4 h-4" />
+                        <span>{metadata.resolution}</span>
                       </div>
                     )}
                     {metadata.fps && (
-                      <div>
-                        <strong>FPS:</strong> {metadata.fps}
+                      <div className="flex items-center gap-2">
+                        <Zap className="w-4 h-4" />
+                        <span>{metadata.fps} FPS</span>
                       </div>
                     )}
                     {metadata.format && (
-                      <div>
-                        <strong>Format:</strong> {metadata.format.toUpperCase()}
+                      <div className="flex items-center gap-2">
+                        <VideoIcon className="w-4 h-4" />
+                        <span>{metadata.format.toUpperCase()}</span>
                       </div>
                     )}
-                    {metadata.duration && (
-                      <div>
-                        <strong>Duration:</strong> {metadata.duration}
+                    {generationStartTime && (
+                      <div className="flex items-center gap-2">
+                        <Timer className="w-4 h-4" />
+                        <span>{Math.round((Date.now() - generationStartTime) / 1000)}s</span>
                       </div>
                     )}
                   </div>
@@ -519,8 +791,8 @@ const VideoPage = () => {
             </Card>
           )}
         </div>
-      </div>
-    </div>
+      </div >
+    </div >
   );
 };
 
