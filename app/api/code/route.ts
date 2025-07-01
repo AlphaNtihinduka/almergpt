@@ -3,9 +3,11 @@ import OpenAI from "openai";
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { ID } from "node-appwrite";
+import { createAdminClient } from "@/config/appwrite";
 
 // Import rate limiter with fallback
-type RateLimitType = { limit: (userId: string) => Promise<{ success: boolean; remaining: number; reset: number }> } | null;
+type RateLimitType = { limit: (u: string) => Promise<{ success: boolean; remaining: number; reset: number }> } | null;
 let ratelimit: RateLimitType = null;
 try {
   // Use dynamic import for ES module compatibility
@@ -21,22 +23,56 @@ try {
 // Simple in-memory rate limiter fallback
 const memoryRateLimit = new Map<string, { count: number; resetTime: number }>();
 
-const checkMemoryRateLimit = (userId: string, limit: number = 50, windowMs: number = 3600000) => {
+const checkMemoryRateLimit = (u: string, limit: number = 50, windowMs: number = 3600000) => {
   const now = Date.now();
-  const userLimit = memoryRateLimit.get(userId);
-  
+  const userLimit = memoryRateLimit.get(u);
+
   if (!userLimit || now > userLimit.resetTime) {
-    memoryRateLimit.set(userId, { count: 1, resetTime: now + windowMs });
+    memoryRateLimit.set(u, { count: 1, resetTime: now + windowMs });
     return { success: true, remaining: limit - 1, reset: now + windowMs };
   }
-  
+
   if (userLimit.count >= limit) {
     return { success: false, remaining: 0, reset: userLimit.resetTime };
   }
-  
+
   userLimit.count++;
   return { success: true, remaining: limit - userLimit.count, reset: userLimit.resetTime };
 };
+
+
+// Helper function to save conversation to Appwrite
+async function saveConversationToAppwrite(data: {
+  userId: string;
+  question: string;
+  response: string;
+  codeType: string;
+}): Promise<string | null> {
+  try {
+
+    const documentData = {
+      userId: data.userId,
+      question: data.question.length > 4000 ? data.question.substring(0, 4000) + '...[truncated]' : data.question,
+      response: data.response.length > 10000 ? data.response.substring(0, 10000) + '...[truncated]' : data.response,
+      codeType: data.codeType
+    };
+
+    const { databases } = await createAdminClient();
+
+    const document = await databases.createDocument(
+      process.env.APPWRITE_DATABASE_ID!,
+      process.env.APPWRITE_COLLECTION_ID!,
+      ID.unique(),
+      documentData
+    );
+
+    console.log(`Conversation auto-saved: Document ID ${document.$id} for user ${data.userId}`);
+    return document.$id;
+  } catch (error) {
+    console.warn('Failed to auto-save conversation:', error instanceof Error ? error.message : 'Unknown error');
+    return null;
+  }
+}
 
 // Input validation schema
 const RequestSchema = z.object({
@@ -49,16 +85,17 @@ const RequestSchema = z.object({
   temperature: z.number().min(0).max(2).optional().default(0.7),
   maxTokens: z.number().min(50).max(3000).optional().default(1500),
   codeType: z.enum([
-    "general", 
-    "web-development", 
-    "backend", 
-    "mobile", 
-    "data-science", 
+    "general",
+    "web-development",
+    "backend",
+    "mobile",
+    "data-science",
     "machine-learning",
     "devops",
     "algorithms",
     "database"
   ]).optional().default("general"),
+  saveConversation: z.boolean().optional().default(true), // Add option to disable saving
 });
 
 // Initialize OpenAI with connection pooling and timeout
@@ -88,49 +125,49 @@ Focus on: React, Next.js, TypeScript, HTML, CSS, JavaScript, Vue, Angular
 - Implement responsive design
 - Follow accessibility guidelines
 - Use TypeScript for type safety`,
-    
+
     "backend": `
 Focus on: Node.js, Python, Java, C#, Go, REST APIs, GraphQL, databases
 - Implement proper error handling
 - Use middleware for common concerns
 - Follow RESTful conventions
 - Implement proper authentication/authorization`,
-    
+
     "mobile": `
 Focus on: React Native, Flutter, Swift, Kotlin, cross-platform development
 - Use platform-specific best practices
 - Implement proper navigation
 - Handle device-specific features
 - Optimize for performance`,
-    
+
     "data-science": `
 Focus on: Python, R, Pandas, NumPy, Matplotlib, Jupyter, data analysis
 - Use efficient data structures
 - Implement proper data cleaning
 - Create meaningful visualizations
 - Handle missing data appropriately`,
-    
+
     "machine-learning": `
 Focus on: TensorFlow, PyTorch, Scikit-learn, ML pipelines, model deployment
 - Implement proper train/validation/test splits
 - Use appropriate evaluation metrics
 - Handle overfitting prevention
 - Consider model interpretability`,
-    
+
     "devops": `
 Focus on: Docker, Kubernetes, CI/CD, Infrastructure as Code, monitoring
 - Use container best practices
 - Implement proper logging
 - Create reproducible environments
 - Follow security hardening guidelines`,
-    
+
     "algorithms": `
 Focus on: Data structures, algorithms, complexity analysis, optimization
 - Analyze time and space complexity
 - Provide multiple solution approaches
 - Explain algorithmic choices
 - Include test cases`,
-    
+
     "database": `
 Focus on: SQL, NoSQL, database design, query optimization, migrations
 - Use proper indexing strategies
@@ -168,7 +205,7 @@ const CODE_KEYWORDS = [
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
   let userId: string | null = null;
-
+  let conversationId: string | null = null;
   try {
     // 1. Authentication
     const authResult = await auth();
@@ -183,7 +220,7 @@ export async function POST(req: NextRequest) {
 
     // 2. Rate limiting with fallback
     let rateLimitResult = { success: true, remaining: 100, reset: Date.now() + 3600000 };
-    
+
     try {
       // Only attempt rate limiting if Redis is properly configured
       if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN && ratelimit) {
@@ -203,12 +240,12 @@ export async function POST(req: NextRequest) {
 
     if (!rateLimitResult.success) {
       return NextResponse.json(
-        { 
-          error: "Rate limit exceeded", 
+        {
+          error: "Rate limit exceeded",
           code: "RATE_LIMIT_EXCEEDED",
-          resetTime: rateLimitResult.reset 
+          resetTime: rateLimitResult.reset
         },
-        { 
+        {
           status: 429,
           headers: {
             'X-RateLimit-Remaining': rateLimitResult.remaining.toString(),
@@ -230,28 +267,27 @@ export async function POST(req: NextRequest) {
     const validationResult = RequestSchema.safeParse(body);
     if (!validationResult.success) {
       return NextResponse.json(
-        { 
-          error: "Invalid request format", 
+        {
+          error: "Invalid request format",
           code: "VALIDATION_ERROR",
-          details: validationResult.error.issues 
+          details: validationResult.error.issues
         },
         { status: 400 }
       );
     }
 
-    const { messages, temperature, maxTokens, codeType } = validationResult.data;
-
+    const { messages, temperature, maxTokens, codeType, saveConversation } = validationResult.data;
     // 4. Content filtering for code-related queries
     const userMessage = messages[messages.length - 1]?.content?.toLowerCase();
     const isCodeRelated = CODE_KEYWORDS.some(keyword => userMessage?.includes(keyword));
-    
+
     // Also check for common code patterns
     const hasCodePatterns = /(?:how to|create|build|implement|develop|write|generate|make).*(?:function|class|component|api|app|website|script|program|code)/i.test(userMessage || '');
-    
+
     if (!isCodeRelated && !hasCodePatterns) {
       return NextResponse.json(
-        { 
-          error: "This endpoint is for code generation and programming assistance only", 
+        {
+          error: "This endpoint is for code generation and programming assistance only",
           code: "NON_CODE_REQUEST",
           suggestion: "Please ask programming-related questions or request code solutions"
         },
@@ -275,7 +311,7 @@ export async function POST(req: NextRequest) {
     });
 
     const reply = completion.choices?.[0]?.message?.content;
-    
+
     if (!reply) {
       throw new Error("No response generated from OpenAI");
     }
@@ -285,9 +321,19 @@ export async function POST(req: NextRequest) {
       throw new Error("Response too short, likely an error occurred");
     }
 
+    // 8. Save conversation to Appwrite (if enabled)
+    if (saveConversation) {
+      conversationId = await saveConversationToAppwrite({
+        userId,
+        question: messages[messages.length - 1].content,
+        response: reply,
+        codeType
+      });
+    }
+
     // 8. Usage tracking
     const responseTime = Date.now() - startTime;
-    
+
     console.log(`Code Generation API Success: User ${userId}, Type: ${codeType}, Response time: ${responseTime}ms, Tokens: ${completion.usage?.total_tokens || 0}`);
 
     // 9. Enhanced response with metadata
@@ -304,7 +350,7 @@ export async function POST(req: NextRequest) {
           rateLimitRemaining: rateLimitResult.remaining,
         }
       },
-      { 
+      {
         status: 200,
         headers: {
           'Cache-Control': 'private, no-cache',
@@ -316,7 +362,7 @@ export async function POST(req: NextRequest) {
 
   } catch (error) {
     const responseTime = Date.now() - startTime;
-    
+
     // Enhanced error logging
     console.error("Code Generation API Error:", {
       error: error instanceof Error ? error.message : "Unknown error",
@@ -337,7 +383,7 @@ export async function POST(req: NextRequest) {
       };
 
       return NextResponse.json(
-        { 
+        {
           error: errorMessages[error.status as keyof typeof errorMessages] || "OpenAI error",
           code: `OPENAI_ERROR_${error.status}`
         },
@@ -363,8 +409,8 @@ export async function POST(req: NextRequest) {
 
     // Generic error response
     return NextResponse.json(
-      { 
-        error: "Internal server error", 
+      {
+        error: "Internal server error",
         code: "INTERNAL_ERROR",
         requestId: `req_${Date.now()}_${Math.random().toString(36).substring(7)}`
       },
@@ -384,13 +430,13 @@ export async function GET() {
     });
 
     // Check Redis status
-    const redisStatus = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN 
-      ? "configured" 
+    const redisStatus = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
+      ? "configured"
       : "using_memory_fallback";
 
     return NextResponse.json(
-      { 
-        status: "healthy", 
+      {
+        status: "healthy",
         service: "code-generation-api",
         openai: "connected",
         rateLimit: redisStatus,
@@ -401,12 +447,12 @@ export async function GET() {
     );
   } catch (error) {
     return NextResponse.json(
-      { 
-        status: "unhealthy", 
+      {
+        status: "unhealthy",
         service: "code-generation-api",
         openai: "disconnected",
         error: error instanceof Error ? error.message : "Unknown error",
-        timestamp: new Date().toISOString() 
+        timestamp: new Date().toISOString()
       },
       { status: 503 }
     );
