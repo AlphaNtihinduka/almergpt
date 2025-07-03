@@ -3,7 +3,7 @@
 
 import Heading from "@/components/heading";
 import React, { useRef, useEffect, useCallback, useMemo } from 'react';
-import { MessageSquare, Send, Copy, RefreshCw, Trash2, User } from "lucide-react";
+import { MessageSquare, Send, Copy, RefreshCw, Trash2, User, History } from "lucide-react";
 import { useForm, FormProvider } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -16,6 +16,8 @@ import Loader from "@/components/loader";
 import BotAvatar from "@/components/bot-avatar";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
+import ConversationHistoryMessage from '@/components/Conversattion_message';
+import { HistoryModal } from "@/components/HistoryModal";
 
 // Define the form schema properly
 const formSchema = z.object({
@@ -34,7 +36,7 @@ interface Message {
 // Custom hooks for better state management
 const useMessages = () => {
   const [messages, setMessages] = useState<Message[]>([]);
-  
+
   const addMessage = useCallback((message: Omit<Message, 'id' | 'timestamp'>) => {
     const newMessage: Message = {
       ...message,
@@ -60,7 +62,7 @@ const useMessages = () => {
     // Remove the assistant message and all subsequent messages
     const messagesUpToUser = messages.slice(0, messageIndex);
     setMessages(messagesUpToUser);
-    
+
     // Trigger regeneration
     await onSubmit(messagesUpToUser);
   }, [messages]);
@@ -77,12 +79,13 @@ const useMessages = () => {
 const ConversationPage = () => {
   const { messages, addMessage, clearMessages, regenerateResponse } = useMessages();
   const [isLoading, setIsLoading] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Auto-scroll with improved UX
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ 
+    messagesEndRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "end"
     });
@@ -109,9 +112,9 @@ const ConversationPage = () => {
   // Enhanced submit handler with proper error handling and debugging
   const onSubmit = useCallback(async (values: z.infer<typeof formSchema>, messageHistory?: Message[]) => {
     const currentMessages = messageHistory || messages;
-    
+
     console.log("🚀 Form submission started", { values, currentMessages });
-    
+
     // Validate the input
     if (!values.prompt?.trim()) {
       toast.error("Please enter a message");
@@ -121,7 +124,7 @@ const ConversationPage = () => {
     try {
       setIsLoading(true);
       console.log("📤 Setting loading state to true");
-      
+
       // Add user message immediately for better UX
       const userMessage = addMessage({
         role: "user",
@@ -144,9 +147,9 @@ const ConversationPage = () => {
         }
       });
 
-      console.log("✅ API response received", { 
-        status: response.status, 
-        data: response.data 
+      console.log("✅ API response received", {
+        status: response.status,
+        data: response.data
       });
 
       // Validate response
@@ -154,10 +157,10 @@ const ConversationPage = () => {
         throw new Error("Empty response from server");
       }
 
-      const assistantContent = response.data.content || 
-                              response.data.message || 
-                              response.data.text ||
-                              "I apologize, but I couldn't generate a response.";
+      const assistantContent = response.data.content ||
+        response.data.message ||
+        response.data.text ||
+        "I apologize, but I couldn't generate a response.";
 
       // Add assistant response
       const assistantMessage = addMessage({
@@ -169,16 +172,16 @@ const ConversationPage = () => {
       // Reset form
       formMethods.reset();
       console.log("🔄 Form reset");
-      
+
       // Refocus input for better UX
       setTimeout(() => {
         inputRef.current?.focus();
         console.log("🎯 Input refocused");
       }, 100);
-      
+
     } catch (error: any) {
       console.error("❌ Conversation error:", error);
-      
+
       // Log detailed error information
       if (error.response) {
         console.error("🔍 Error response:", {
@@ -192,7 +195,7 @@ const ConversationPage = () => {
       } else {
         console.error("🔍 Error message:", error.message);
       }
-      
+
       // Add error message to chat
       addMessage({
         role: "assistant",
@@ -244,7 +247,7 @@ const ConversationPage = () => {
           formMethods.handleSubmit((values) => onSubmit(values))();
         }
       }
-      
+
       // Escape to clear input
       if (e.key === 'Escape' && document.activeElement === inputRef.current) {
         formMethods.reset();
@@ -260,11 +263,11 @@ const ConversationPage = () => {
   const currentPrompt = formMethods.watch('prompt');
   const isSubmitDisabled = isLoading || !currentPrompt?.trim();
 
-  console.log("🔍 Current form state:", { 
-    currentPrompt, 
-    isLoading, 
+  console.log("🔍 Current form state:", {
+    currentPrompt,
+    isLoading,
     isSubmitDisabled,
-    messagesCount: messages.length 
+    messagesCount: messages.length
   });
 
   // Memoized components for performance
@@ -305,19 +308,41 @@ const ConversationPage = () => {
           iconColor="text-violet-500"
           bgColor="bg-violet-500/10"
         />
-        
-        {messages.length > 0 && (
+
+        {/* Action buttons container */}
+        <div className="flex items-center space-x-3">
           <Button
             variant="outline"
             size="sm"
-            onClick={clearMessages}
-            className="text-gray-600 hover:text-red-600 transition-colors"
+            onClick={() => setIsHistoryOpen(true)}
+            className="text-gray-600 hover:text-violet-600 border-violet-200 hover:border-violet-300 transition-colors"
           >
-            <Trash2 className="w-4 h-4 mr-2" />
-            Clear Chat
+            <History className="w-4 h-4 mr-2" />
+            History
           </Button>
-        )}
+
+          {messages.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={clearMessages}
+              className="text-gray-600 hover:text-red-600 border-red-200 hover:border-red-300 transition-colors"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Clear Chat
+            </Button>
+          )}
+        </div>
       </div>
+
+      {/* History Modal */}
+      <HistoryModal
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        title="Conversation Messages History"
+      >
+        <ConversationHistoryMessage />
+      </HistoryModal>
 
       {/* Input form with enhanced styling and debugging */}
       <div className="px-4 lg:px-8 mb-6">
@@ -363,7 +388,7 @@ const ConversationPage = () => {
                   </FormItem>
                 )}
               />
-              
+
               <Button
                 type="submit"
                 disabled={isSubmitDisabled}
@@ -412,17 +437,16 @@ const ConversationPage = () => {
                     </div>
 
                     {/* Message content */}
-                    <Card className={`relative px-4 py-3 shadow-sm hover:shadow-md transition-shadow duration-200 ${
-                      message.role === 'user' 
-                        ? 'bg-gradient-to-br from-violet-500 to-purple-600 text-white rounded-2xl rounded-tr-sm' 
-                        : message.isError 
-                          ? 'bg-red-50 border-red-200 text-red-800 rounded-2xl rounded-tl-sm' 
-                          : 'bg-gray-50 border-gray-200 rounded-2xl rounded-tl-sm'
-                    }`}>
+                    <Card className={`relative px-4 py-3 shadow-sm hover:shadow-md transition-shadow duration-200 ${message.role === 'user'
+                      ? 'bg-gradient-to-br from-violet-500 to-purple-600 text-white rounded-2xl rounded-tr-sm'
+                      : message.isError
+                        ? 'bg-red-50 border-red-200 text-red-800 rounded-2xl rounded-tl-sm'
+                        : 'bg-gray-50 border-gray-200 rounded-2xl rounded-tl-sm'
+                      }`}>
                       <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
                         {message.content}
                       </div>
-                      
+
                       {/* Message timestamp */}
                       <div className={`text-xs mt-2 opacity-60 ${message.role === 'user' ? 'text-white' : 'text-gray-500'}`}>
                         {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -438,13 +462,13 @@ const ConversationPage = () => {
                         >
                           <Copy className="w-3 h-3" />
                         </Button>
-                        
+
                         {message.role === 'assistant' && !message.isError && (
                           <Button
                             variant="ghost"
                             size="sm"
                             className="h-6 w-6 p-0 hover:bg-white/20 rounded-md"
-                            onClick={() => regenerateResponse(message.id, (msgs) => 
+                            onClick={() => regenerateResponse(message.id, (msgs) =>
                               onSubmit({
                                 prompt: msgs[msgs.length - 1]?.content || '',
                               }, msgs.slice(0, -1))
@@ -474,7 +498,7 @@ const ConversationPage = () => {
             </div>
           )}
         </div>
-        
+
         {/* Scroll anchor */}
         <div ref={messagesEndRef} />
       </div>
