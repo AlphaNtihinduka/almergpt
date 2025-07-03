@@ -2,12 +2,12 @@
 "use client";
 
 import Heading from "@/components/heading";
-import { 
-  Download, 
-  ImageIcon, 
-  Trash2, 
-  Copy, 
-  Share2, 
+import {
+  Download,
+  ImageIcon,
+  Trash2,
+  Copy,
+  Share2,
   Eye,
   AlertCircle,
   RefreshCw,
@@ -35,12 +35,12 @@ import {
   SelectItem
 } from "@/components/ui/select";
 import { Card, CardFooter } from "@/components/ui/card";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
   DialogTitle,
-  DialogTrigger 
+  DialogTrigger
 } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -52,6 +52,8 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { HistoryModal } from "@/components/HistoryModal";
+import ImageGenerationHistory from "@/components/ImageGenerationHistory";
 
 // Enhanced types
 interface GeneratedImage {
@@ -75,9 +77,10 @@ const ImagePage = () => {
   const [images, setImages] = useState<GeneratedImage[]>([]);
   const [selectedImage, setSelectedImage] = useState<GeneratedImage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
   const [retryCount, setRetryCount] = useState<number>(0);
-  
+
   // Refs
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -108,26 +111,26 @@ const ImagePage = () => {
   const handleApiError = useCallback((error: unknown): string => {
     if (axios.isAxiosError(error)) {
       const axiosError = error as AxiosError<ApiError>;
-      
+
       if (axiosError.response?.status === 429) {
         return "Rate limit exceeded. Please wait a moment before trying again.";
       }
-      
+
       if (axiosError.response?.status === 402) {
         return "Insufficient credits. Please check your account balance.";
       }
-      
+
       if (axiosError.response?.data?.message) {
         return axiosError.response.data.message;
       }
-      
+
       return axiosError.message || "Network error occurred";
     }
-    
+
     if (error instanceof Error) {
       return error.message;
     }
-    
+
     return "An unexpected error occurred";
   }, []);
 
@@ -143,7 +146,7 @@ const ImagePage = () => {
         return prev + Math.random() * 15;
       });
     }, 500);
-    
+
     return () => clearInterval(interval);
   }, []);
 
@@ -152,16 +155,16 @@ const ImagePage = () => {
     try {
       setError(null);
       setImages([]);
-      
+
       const cleanup = simulateProgress();
-      
+
       const response = await axios.post("/api/image", values, {
         timeout: 60000, // 60 second timeout
       });
-      
+
       cleanup();
       setProgress(100);
-      
+
       const newImages: GeneratedImage[] = response.data.images.map((img: Pick<GeneratedImage, 'url' | 'revised_prompt'>, index: number) => ({
         id: `${Date.now()}-${index}`,
         url: img.url,
@@ -171,19 +174,19 @@ const ImagePage = () => {
         created_at: new Date(),
         is_favorite: false
       }));
-      
+
       setImages(newImages);
       setRetryCount(0);
-      
+
       toast("Images generated successfully!");
-      
+
       // Reset form after successful generation
       formMethods.reset({
         prompt: "",
         amount: values.amount,
         resolution: values.resolution,
       });
-      
+
     } catch (error: unknown) {
       const errorMessage = handleApiError(error);
       setError(errorMessage);
@@ -226,8 +229,8 @@ const ImagePage = () => {
   }, []);
 
   const toggleFavorite = useCallback((imageId: string) => {
-    setImages(prev => prev.map(img => 
-      img.id === imageId 
+    setImages(prev => prev.map(img =>
+      img.id === imageId
         ? { ...img, is_favorite: !img.is_favorite }
         : img
     ));
@@ -263,14 +266,25 @@ const ImagePage = () => {
 
   return (
     <div className="space-y-6">
-      <Heading
-        title="AI Image Generator"
-        description="Create stunning images with advanced AI technology"
-        icon={ImageIcon}
-        iconColor="text-violet-500"
-        bgColor="bg-violet-500/10"
-      />
+      <div className="flex items-center justify-between w-full mb-4">
+        <Heading
+          title="AI Image Generator"
+          description="Create stunning images with advanced AI technology"
+          icon={ImageIcon}
+          iconColor="text-violet-500"
+          bgColor="bg-violet-500/10"
+        />
 
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setIsHistoryOpen(true)
+          }
+          className="gap-2 mr-8"
+        >
+          Recent search
+        </Button>
+      </div>
       <div className="px-4 lg:px-8">
         <FormProvider {...formMethods}>
           <form
@@ -296,7 +310,7 @@ const ImagePage = () => {
                   </FormItem>
                 )}
               />
-              
+
               {/* Prompt stats */}
               <div className="flex justify-between items-center text-sm text-muted-foreground">
                 <span>{promptValue.length} characters</span>
@@ -380,6 +394,13 @@ const ImagePage = () => {
                 )}
               </Button>
             </div>
+            <HistoryModal
+              isOpen={isHistoryOpen}
+              onClose={() => setIsHistoryOpen(false)}
+              title="Recent Searches"
+            >
+              <ImageGenerationHistory />
+            </HistoryModal>
 
             {/* Keyboard shortcut hint */}
             <div className="text-xs text-muted-foreground text-center">
@@ -429,11 +450,11 @@ const ImagePage = () => {
             <p className="mt-4 text-muted-foreground">Creating your masterpiece...</p>
           </div>
         )}
-        
+
         {images.length === 0 && !isLoading && (
           <Empty label="No images generated yet. Enter a prompt above to get started!" />
         )}
-        
+
         {images.length > 0 && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -448,7 +469,6 @@ const ImagePage = () => {
                 Clear All
               </Button>
             </div>
-            
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {images.map((image) => (
                 <Card key={image.id} className="group relative overflow-hidden hover:shadow-lg transition-all duration-200">
@@ -460,7 +480,7 @@ const ImagePage = () => {
                       className="object-cover transition-transform group-hover:scale-105"
                       sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
                     />
-                    
+
                     {/* Overlay controls */}
                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-2">
                       <Dialog>
@@ -487,7 +507,7 @@ const ImagePage = () => {
                           </div>
                         </DialogContent>
                       </Dialog>
-                      
+
                       <Button
                         size="sm"
                         variant="secondary"
@@ -495,7 +515,7 @@ const ImagePage = () => {
                       >
                         <Download className="w-4 h-4" />
                       </Button>
-                      
+
                       <Button
                         size="sm"
                         variant="secondary"
@@ -504,32 +524,32 @@ const ImagePage = () => {
                         <Heart className={`w-4 h-4 ${image.is_favorite ? 'fill-red-500 text-red-500' : ''}`} />
                       </Button>
                     </div>
-                    
+
                     {/* Resolution badge */}
-                    <Badge 
-                      variant="secondary" 
+                    <Badge
+                      variant="secondary"
                       className="absolute top-2 left-2 text-xs"
                     >
                       {image.resolution}
                     </Badge>
-                    
+
                     {/* Favorite indicator */}
                     {image.is_favorite && (
                       <Heart className="absolute top-2 right-2 w-4 h-4 fill-red-500 text-red-500" />
                     )}
                   </div>
-                  
+
                   {/* Card content */}
                   <div className="p-3 space-y-2">
                     <div className="text-xs text-muted-foreground line-clamp-2">
                       {image.revised_prompt || image.original_prompt}
                     </div>
-                    
+
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted-foreground">
                         {image.created_at.toLocaleTimeString()}
                       </span>
-                      
+
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="sm">
@@ -549,7 +569,7 @@ const ImagePage = () => {
                             <Share2 className="w-4 h-4 mr-2" />
                             Share
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             onClick={() => deleteImage(image.id)}
                             className="text-destructive"
                           >
@@ -566,7 +586,7 @@ const ImagePage = () => {
           </div>
         )}
       </div>
-    </div>
+    </div >
   );
 };
 
