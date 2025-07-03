@@ -18,7 +18,8 @@ import {
   Settings,
   Maximize2,
   Minimize2,
-  RefreshCw
+  RefreshCw,
+  History // Add this import
 } from "lucide-react";
 import { useForm, FormProvider } from "react-hook-form";
 import * as z from "zod";
@@ -45,6 +46,8 @@ import ReactMarkDown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { toast } from "sonner";
+import { HistoryModal } from "@/components/HistoryModal";
+import ConversationHistory from "@/components/Code_conversation_history";
 
 // Enhanced message type with metadata
 type Message = {
@@ -73,6 +76,7 @@ const CodePage = () => {
   const [showMetadata, setShowMetadata] = useState(true);
   const [typingAnimation, setTypingAnimation] = useState(false);
   const [streamingProgress, setStreamingProgress] = useState(0);
+  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -456,6 +460,25 @@ const CodePage = () => {
                 </Badge>
               )}
 
+              {/* Add History Modal Button */}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setIsHistoryOpen(true)}
+                      className="hover:bg-slate-100 dark:hover:bg-slate-700"
+                    >
+                      <History className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>View conversation history</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -500,11 +523,18 @@ const CodePage = () => {
                 <FormItem className="col-span-12 lg:col-span-10">
                   <FormControl className="m-0 p-0">
                     <Input
-                      // ref={inputRef}
+                      ref={(el) => {
+                        field.ref(el);
+                        // Assign to inputRef only if not null and inputRef is not read-only
+                        // Remove the assignment to inputRef.current to avoid error
+                      }}
                       className="border-0 outline-none focus-visible:ring-0 focus-visible:ring-transparent text-base placeholder:text-slate-400 bg-transparent"
                       placeholder="Describe the code you want to generate... (e.g., 'Create a React component for a music player with play/pause functionality')"
                       disabled={isLoading}
-                      {...field}
+                      name={field.name}
+                      value={field.value}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                           formMethods.handleSubmit(onSubmit)();
@@ -557,6 +587,15 @@ const CodePage = () => {
             </div>
           </form>
         </FormProvider>
+
+        {/* History Modal */}
+        <HistoryModal
+          isOpen={isHistoryOpen}
+          onClose={() => setIsHistoryOpen(false)}
+          title="Conversation History"
+        >
+          <ConversationHistory />
+        </HistoryModal>
 
         {/* Enhanced error display */}
         {apiError && (
