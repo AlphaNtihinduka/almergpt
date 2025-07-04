@@ -1,7 +1,7 @@
 "use client";
 
 import Heading from "@/components/heading";
-import { MusicIcon, AlertCircle, Clock } from "lucide-react";
+import { MusicIcon, AlertCircle, Clock, ChevronUp, ChevronDown } from "lucide-react";
 import { useForm, FormProvider } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,6 +14,8 @@ import axios, { AxiosError } from "axios";
 import { useState, useCallback, useRef, useEffect } from "react";
 import Empty from "@/components/empty";
 import Loader from "@/components/loader";
+import { HistoryModal } from "@/components/HistoryModal";
+import MusicHistory from "@/components/MusicHistory";
 
 // Enhanced form schema with validation
 const formSchema = z.object({
@@ -43,6 +45,7 @@ const MusicPage = () => {
   const [music, setMusic] = useState<string>();
   const [error, setError] = useState<string>();
   const [progress, setProgress] = useState<number>(0);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [rateLimitReset, setRateLimitReset] = useState<Date | null>(null);
   const [generationHistory, setGenerationHistory] = useState<string[]>([]);
@@ -229,13 +232,25 @@ const MusicPage = () => {
 
   return (
     <div>
-      <Heading
-        title="Music Generation"
-        description="Generate amazing music using AI based on your creative prompts"
-        icon={MusicIcon}
-        iconColor="text-violet-500"
-        bgColor="bg-violet-500/10"
-      />
+      <div className="flex justify-between items-center">
+        <Heading
+          title="Music Generation"
+          description="Generate amazing music using AI based on your creative prompts"
+          icon={MusicIcon}
+          iconColor="text-violet-500"
+          bgColor="bg-violet-500/10"
+        />
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setIsHistoryOpen(!isHistoryOpen)}
+          className="flex items-center gap-2 mr-8 hover:bg-gray-100 transition-colors duration-200 disabled:opacity-50 disabled:pointer-events-none"
+        >
+          {isHistoryOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          History
+        </Button>
+      </div>
 
       <div className="px-4 lg:px-8">
         {/* Error Alert */}
@@ -360,6 +375,15 @@ const MusicPage = () => {
         )}
       </div>
 
+      { /* History Section */}
+      <HistoryModal
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        title="Music Generation History"
+      >
+        <MusicHistory />
+      </HistoryModal>
+
       <div className="space-y-4 mt-4 px-4 lg:px-8">
         {/* Loading State */}
         {isGenerating && (
@@ -419,7 +443,7 @@ const MusicPage = () => {
           </div>
         )}
       </div>
-    </div>
+    </div >
   );
 };
 
