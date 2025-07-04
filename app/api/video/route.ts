@@ -4,6 +4,8 @@ import Replicate from "replicate";
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import Redis from "ioredis";
+import { createAdminClient } from "@/config/appwrite";
+import { ID, Query } from "node-appwrite";
 
 // Initialize clients
 const replicate = new Replicate({
@@ -56,6 +58,149 @@ interface VideoGenerationResponse {
     resolution?: string;
     fps?: number;
   };
+}
+
+// Appwrite document structure
+interface VideoGenerationDocument {
+  userId: string;
+  prompt: string;
+  fps: number;
+  width: number;
+  height: number;
+  guidance_scale: string;
+  negative_prompt: string;
+  duration: number;
+  priority: string;
+  num_inference_steps: number;
+  success: boolean;
+  video_url?: string;
+  prediction_id?: string;
+  status: string;
+  error?: string;
+  queue_position?: number;
+  estimated_wait_time?: number;
+  cached: boolean;
+  metadata?: string; // JSON string
+  created_at: string;
+  updated_at: string;
+  model_version?: string;
+  seed?: number;
+  processing_time?: number;
+  progress?: number;
+}
+
+// Save to Appwrite
+async function saveToAppwrite(
+  userId: string,
+  input: VideoGenerationInput,
+  response: VideoGenerationResponse,
+  additionalData?: {
+    modelVersion?: string;
+    seed?: number;
+    processingTime?: number;
+    progress?: number;
+  }
+): Promise<string | null> {
+  try {
+    const document: Partial<VideoGenerationDocument> = {
+      userId,
+      prompt: input.prompt,
+      fps: input.fps || 15,
+      width: input.width || 512,
+      height: input.height || 512,
+      guidance_scale: String(input.guidance_scale || 7.5),
+      negative_prompt: input.negative_prompt || "blurry, low quality",
+      duration: input.duration || 2,
+      priority: input.priority || "ultra_fast",
+      num_inference_steps: input.num_inference_steps || 20,
+      success: response.success,
+      video_url: response.video,
+      prediction_id: response.predictionId,
+      status: response.status || "unknown",
+      error: response.error,
+      queue_position: response.queuePosition,
+      estimated_wait_time: response.estimatedWaitTime,
+      cached: response.cached || false,
+      metadata: response.metadata ? JSON.stringify(response.metadata) : undefined,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      model_version: additionalData?.modelVersion,
+      seed: additionalData?.seed,
+      processing_time: additionalData?.processingTime,
+      progress: additionalData?.progress
+    };
+
+    const { databases } = await createAdminClient();
+
+    const result = await databases.createDocument(
+      process.env.APPWRITE_DATABASE_ID!,
+      process.env.APPWRITE_VIDEO_GENERATIONS_COLLECTION_ID!,
+      ID.unique(),
+      document
+    );
+
+    console.log("Successfully saved to Appwrite:", result.$id);
+    return JSON.stringify({
+      id: result.$id,
+      userId: result.userId,
+      prompt: result.prompt,
+      videoUrl: result.video_url,
+      status: result.status,
+      createdAt: result.created_at,
+      updatedAt: result.updated_at,
+      metadata: result.metadata ? JSON.parse(result.metadata) : undefined
+    });
+  } catch (error) {
+    console.error("Failed to save to Appwrite:", error);
+    return null;
+  }
+}
+
+async function updateAppwriteDocument(documentId: string, response: Partial<VideoGenerationDocument>): Promise<void> {
+  try {
+    const { databases } = await createAdminClient();
+
+    const updateData: Partial<VideoGenerationDocument> = {
+      updated_at: new Date().toISOString(),
+      ...response,
+      metadata: response.metadata && typeof response.metadata !== "string" ? JSON.stringify(response.metadata) : response.metadata
+    };
+
+    await databases.updateDocument(
+      process.env.APPWRITE_DATABASE_ID!,
+      process.env.APPWRITE_VIDEO_GENERATIONS_COLLECTION_ID!,
+      documentId,
+      updateData
+    );
+
+    console.log("Successfully updated Appwrite document:", documentId);
+  } catch (error) {
+    console.error("Failed to update Appwrite document:", error);
+  }
+}
+
+// Get document from Appwrite by prediction ID
+async function getAppwriteDocumentByPredictionId(predictionId: string): Promise<any> {
+  try {
+
+    const { databases } = await createAdminClient();
+
+    const response = await databases.listDocuments(
+      process.env.APPWRITE_DATABASE_ID!,
+      process.env.APPWRITE_VIDEO_GENERATIONS_COLLECTION_ID!,
+      [
+        // Add query filter for prediction_id
+        Query.equal('prediction_id', predictionId)
+      ]
+    );
+
+    // Filter manually since we might not have the Query import
+    const document = response.documents.find(doc => doc.prediction_id === predictionId);
+    return document || null;
+  } catch (error) {
+    console.error("Failed to get document from Appwrite:", error);
+    return null;
+  }
 }
 
 // Generate cache key for similar prompts
@@ -165,6 +310,7 @@ function getMockResponse(): VideoGenerationResponse {
 // Optimized video generation with queue processing
 async function generateVideo(input: VideoGenerationInput, userId: string): Promise<VideoGenerationResponse> {
   const jobId = `${userId}_${Date.now()}`;
+  const startTime = Date.now();
 
   try {
     // Add to active jobs
@@ -178,6 +324,7 @@ async function generateVideo(input: VideoGenerationInput, userId: string): Promi
 
     // Choose model based on priority
     const modelVersion = VIDEO_MODELS[input.priority!];
+    const seed = Math.floor(Math.random() * 100000); // Random seed for variability
 
     const replicateInput = {
       fps: input.fps!,
@@ -199,10 +346,14 @@ async function generateVideo(input: VideoGenerationInput, userId: string): Promi
       input: replicateInput,
     });
 
+    console.log("Prediction created:", prediction);
+
     console.log("Prediction started:", prediction.id);
 
-    // Return immediately with prediction ID for client polling
-    return {
+    const processingTime = Date.now() - startTime;
+
+    // Return response data
+    const response: VideoGenerationResponse = {
       success: true,
       predictionId: prediction.id,
       status: "processing",
@@ -214,13 +365,28 @@ async function generateVideo(input: VideoGenerationInput, userId: string): Promi
       }
     };
 
+    // Save to Appwrite with additional data
+    await saveToAppwrite(userId, input, response, {
+      modelVersion,
+      seed,
+      processingTime
+    });
+
+    return response;
+
   } catch (error) {
     console.error("Video generation error:", error);
-    return {
+
+    const errorResponse: VideoGenerationResponse = {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error occurred",
       status: "failed"
     };
+
+    // Save error to Appwrite
+    await saveToAppwrite(userId, input, errorResponse);
+
+    return errorResponse;
   } finally {
     // Remove from active jobs
     await redis.srem(ACTIVE_JOBS_KEY, jobId);
@@ -286,7 +452,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     if (cachedVideo) {
       console.log("Cache hit for user:", userId);
-      return NextResponse.json({
+      const cachedResponse: VideoGenerationResponse = {
         success: true,
         video: cachedVideo,
         status: "succeeded",
@@ -296,20 +462,29 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           resolution: `${validatedInput.width}x${validatedInput.height}`,
           fps: validatedInput.fps
         }
-      });
+      };
+      // Save cached result to Appwrite
+      await saveToAppwrite(userId, validatedInput, cachedResponse);
+
+      return NextResponse.json(cachedResponse);
     }
 
     // Check if we're at capacity
     const activeJobs = await getActiveJobsCount();
     if (activeJobs >= MAX_CONCURRENT_GENERATIONS) {
       const queuePosition = await addToQueue(userId, validatedInput);
-      return NextResponse.json({
+      const queuedResponse = {
         success: true,
         status: "queued",
         queuePosition,
-        estimatedWaitTime: queuePosition * 10, // 10 seconds per position
+        estimatedWaitTime: queuePosition * 10,
         message: "Request queued due to high demand"
-      });
+      };
+
+      // Save queued status to Appwrite
+      await saveToAppwrite(userId, validatedInput, queuedResponse);
+
+      return NextResponse.json(queuedResponse);
     }
 
     // Generate video (async)
@@ -317,9 +492,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       ? getMockResponse()
       : await generateVideo(validatedInput, userId);
 
+    // Save mock result to Appwrite if using mock
+    if (USE_MOCK) {
+      await saveToAppwrite(userId, validatedInput, result);
+    }
+
     // For successful generations, we return the prediction ID for polling
     if (result.success && result.predictionId) {
-      // Cache successful results would be handled in the GET endpoint
       console.log("Video generation initiated:", {
         userId,
         predictionId: result.predictionId
@@ -362,11 +541,23 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     if (USE_MOCK) {
-      return NextResponse.json({
+      const mockResponse = {
         success: true,
         status: "succeeded",
         video: "/braveboy.mp4"
-      });
+      };
+
+      // Update Appwrite document if it exists
+      const existingDoc = await getAppwriteDocumentByPredictionId(predictionId);
+      if (existingDoc) {
+        await updateAppwriteDocument(existingDoc.$id, {
+          status: "succeeded",
+          video_url: "/braveboy.mp4",
+          success: true
+        });
+      }
+
+      return NextResponse.json(mockResponse);
     }
 
     // Get prediction status
@@ -403,14 +594,30 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     };
 
     // Add progress information if available
+    let progress = undefined;
     if (prediction.status === "processing" && prediction.logs) {
       const logs = Array.isArray(prediction.logs) ? prediction.logs.join("\n") : prediction.logs;
       if (logs.includes("%")) {
         const progressMatch = logs.match(/(\d+)%/);
         if (progressMatch) {
-          (response as any).progress = parseInt(progressMatch[1]);
+          progress = parseInt(progressMatch[1]);
+          (response as any).progress = progress;
         }
       }
+    }
+
+    // Update Appwrite document with latest status
+    const existingDoc = await getAppwriteDocumentByPredictionId(predictionId);
+    if (existingDoc) {
+      const updateData: Partial<VideoGenerationDocument> = {
+        status: prediction.status,
+        success: prediction.status === "succeeded",
+        video_url: videoUrl || undefined,
+        error: prediction.error ? String(prediction.error) : undefined,
+        progress
+      };
+
+      await updateAppwriteDocument(existingDoc.$id, updateData);
     }
 
     return NextResponse.json(response);
