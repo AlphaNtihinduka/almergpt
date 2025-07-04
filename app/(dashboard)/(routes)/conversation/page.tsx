@@ -315,7 +315,7 @@ const ConversationPage = () => {
             variant="outline"
             size="sm"
             onClick={() => setIsHistoryOpen(true)}
-            className="text-gray-600 hover:text-violet-600 border-violet-200 hover:border-violet-300 transition-colors"
+            className="text-gray-600 hover:text-violet-600 border-violet-200 hover:border-violet-300 transition-colors mr-8"
           >
             <History className="w-4 h-4 mr-2" />
             History
