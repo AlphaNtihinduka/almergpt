@@ -20,6 +20,8 @@ import axios from "axios";
 import { useState, useCallback, useEffect, useRef } from "react";
 import Empty from "@/components/empty";
 import Loader from "@/components/loader";
+import { HistoryModal } from "@/components/HistoryModal";
+import VideoHistory from "@/components/VideoHistory";
 
 // Enhanced form schema with priority
 const formSchema = z.object({
@@ -100,6 +102,7 @@ const VideoPage = () => {
   const [isQueued, setIsQueued] = useState(false);
   const [generationStartTime, setGenerationStartTime] = useState<number>();
   const [cachedResult, setCachedResult] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   const intervalRef = useRef<NodeJS.Timeout>();
   const factIntervalRef = useRef<NodeJS.Timeout>();
@@ -345,13 +348,24 @@ const VideoPage = () => {
 
   return (
     <div>
-      <Heading
-        title="AI Video Generation"
-        description="Create stunning videos with AI in seconds"
-        icon={VideoIcon}
-        iconColor="text-orange-700"
-        bgColor="bg-orange-700/10"
-      />
+      <div className="flex items-center justify-between mb-4">
+        <Heading
+          title="AI Video Generation"
+          description="Create stunning videos with AI in seconds"
+          icon={VideoIcon}
+          iconColor="text-orange-700"
+          bgColor="bg-orange-700/10"
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setIsHistoryOpen(true)}
+          className="flex items-center gap-2 mr-8"
+        >
+          <Eye className="w-4 h-4" />
+          {isHistoryOpen ? "Hide History" : "View History"}
+        </Button>
+      </div>
 
       <div className="px-4 lg:px-8">
         <FormProvider {...formMethods}>
@@ -699,6 +713,15 @@ const VideoPage = () => {
             </Card>
           )
         }
+
+        {/* <!-- History Section --> */}
+        <HistoryModal
+          isOpen={isHistoryOpen}
+          onClose={() => setIsHistoryOpen(false)}
+          title="Video Generation History"
+        >
+          <VideoHistory />
+        </HistoryModal>
 
         {/* Cached Result Notice */}
         {
