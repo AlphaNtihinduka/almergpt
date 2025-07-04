@@ -2,11 +2,15 @@ import Replicate from "replicate";
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
 import { z } from "zod";
+import { ID } from "node-appwrite";
+import { createAdminClient } from "@/config/appwrite";
 
 // Environment validation
 const envSchema = z.object({
   REPLICATE_API_TOKEN: z.string().min(1, "REPLICATE_API_TOKEN is required"),
   NODE_ENV: z.string().optional(),
+  APPWRITE_DATABASE_ID: z.string().optional(),
+  APPWRITE_MUSIC_GENERATIONS_COLLECTION_ID: z.string().optional(),
 });
 
 const env = envSchema.parse(process.env);
@@ -18,6 +22,19 @@ const requestSchema = z.object({
     .max(500, "Prompt must be less than 500 characters")
     .trim(),
 });
+
+type MusicRecord = z.infer<ReturnType<typeof z.object<{
+  userId: z.ZodString;
+  prompt: z.ZodString;
+  audioUrl?: z.ZodOptional<z.ZodString>;
+  audioBase64?: z.ZodOptional<z.ZodString>;
+  status: z.ZodEnum<["pending", "success", "failed"]>;
+  processingTime: z.ZodString;
+  error?: z.ZodOptional<z.ZodString>;
+  metadata:
+  z.ZodOptional<z.ZodString>
+}>>>;
+
 
 // Rate limiting store (in production, use Redis)
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
@@ -44,16 +61,16 @@ function isContentAppropriate(prompt: string): boolean {
 function checkRateLimit(userId: string): { allowed: boolean; resetTime?: number } {
   const now = Date.now();
   const userLimit = rateLimitStore.get(userId);
-  
+
   if (!userLimit || now > userLimit.resetTime) {
     rateLimitStore.set(userId, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
     return { allowed: true };
   }
-  
+
   if (userLimit.count >= RATE_LIMIT_MAX_REQUESTS) {
     return { allowed: false, resetTime: userLimit.resetTime };
   }
-  
+
   userLimit.count++;
   return { allowed: true };
 }
@@ -69,19 +86,19 @@ async function streamToBase64(stream: ReadableStream): Promise<string> {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      
+
       totalSize += value.length;
       if (totalSize > MAX_SIZE) {
         throw new Error("Audio file too large");
       }
-      
+
       chunks.push(value);
     }
 
     const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     const combined = new Uint8Array(totalLength);
     let offset = 0;
-    
+
     for (const chunk of chunks) {
       combined.set(chunk, offset);
       offset += chunk.length;
@@ -93,15 +110,75 @@ async function streamToBase64(stream: ReadableStream): Promise<string> {
   }
 }
 
+// Calculate file size from base64 string
+function getBase64FileSize(base64String: string): number {
+  // Remove data URL prefix if present
+  const base64Data = base64String.replace(/^data:audio\/[^;]+;base64,/, '');
+  // Calculate approximate size (base64 is ~33% larger than binary)
+  return Math.floor((base64Data.length * 3) / 4);
+}
+
+// Save music generation record to Appwrite
+async function saveMusicRecord(record: Omit<MusicRecord, 'metadata'> & { metadata: Partial<MusicRecord['metadata']> }): Promise<string> {
+  try {
+    const fullRecord = {
+      ...record,
+      metadata: JSON.stringify({
+        model: "riffusion/riffusion:8cf61ea6c56afd61d8f5b9ffd14d7c216c0a93844ce2d82ac1c9ecc9c7f24e05",
+        timestamp: new Date().toISOString(),
+        ...(typeof record.metadata === "object" && record.metadata !== null ? record.metadata : {}),
+      }),
+    };
+
+    const { databases } = await createAdminClient();
+
+    const documentId = ID.unique();
+
+    const document = await databases.createDocument(
+      env.APPWRITE_DATABASE_ID!,
+      env.APPWRITE_MUSIC_GENERATIONS_COLLECTION_ID!,
+      documentId,
+      fullRecord
+    );
+
+    console.log(`[${record.userId}] Music record saved to Appwrite: ${document}`);
+    return JSON.stringify({
+      id: documentId,
+      ...fullRecord,
+    }, null, 2);
+  } catch (error) {
+    console.error(`[${record.userId}]Failed to save music record: `, error);
+    throw new Error("Failed to save music generation record");
+  }
+}
+
+// Update music generation record in Appwrite
+async function updateMusicRecord(documentId: string, updates: Partial<MusicRecord>): Promise<void> {
+  try {
+    const { databases } = await createAdminClient();
+
+    await databases.updateDocument(
+      env.APPWRITE_DATABASE_ID!,
+      env.APPWRITE_MUSIC_GENERATIONS_COLLECTION_ID!,
+      documentId,
+      updates
+    );
+    console.log(`Music record updated: ${documentId}`);
+  } catch (error) {
+    console.error(`Failed to update music record ${documentId}:`, error);
+    // Don't throw here as this is a background operation
+  }
+}
+
 // Error response helper
 function createErrorResponse(message: string, status: number, code?: string) {
   return new Response(
-    JSON.stringify({ 
-      error: message, 
+    JSON.stringify({
+      error: message,
       code,
-      timestamp: new Date().toISOString() 
+      timestamp: new Date().toISOString()
     }),
-    { 
+    {
       status,
       headers: {
         'Content-Type': 'application/json',
@@ -114,12 +191,13 @@ function createErrorResponse(message: string, status: number, code?: string) {
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
   let userId: string | null = null;
+  let documentId: string | null = null;
 
   try {
     // Authentication
     const authResult = await auth();
     userId = authResult.userId;
-    
+
     if (!userId) {
       return createErrorResponse("Authentication required", 401, "UNAUTHORIZED");
     }
@@ -129,12 +207,12 @@ export async function POST(req: NextRequest) {
     if (!rateLimitResult.allowed) {
       const resetTime = rateLimitResult.resetTime!;
       return new Response(
-        JSON.stringify({ 
-          error: "Rate limit exceeded", 
+        JSON.stringify({
+          error: "Rate limit exceeded",
           resetTime: new Date(resetTime).toISOString(),
           code: "RATE_LIMIT_EXCEEDED"
         }),
-        { 
+        {
           status: 429,
           headers: {
             'Content-Type': 'application/json',
@@ -147,10 +225,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Request validation with timeout
-    const timeoutPromise = new Promise((_, reject) => 
+    const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error("Request timeout")), 30000)
     );
-    
+
     const body = await Promise.race([
       req.json(),
       timeoutPromise
@@ -177,6 +255,20 @@ export async function POST(req: NextRequest) {
     }
 
     console.log(`[${userId}] Music generation started: "${prompt.substring(0, 50)}..."`);
+
+    // Create initial record in Appwrite
+    try {
+      documentId = await saveMusicRecord({
+        userId,
+        prompt,
+        status: "pending",
+        processingTime: "0",
+        metadata: undefined
+      });
+    } catch (error) {
+      console.error(`[${userId}] Failed to create initial record:`, error);
+      // Continue without saving - don't fail the entire request
+    }
 
     // Replicate API call with timeout and retry logic
     const REPLICATE_TIMEOUT = 120000; // 2 minutes
@@ -206,11 +298,11 @@ export async function POST(req: NextRequest) {
             ? (error as { message: string }).message
             : String(error);
         console.error(`[${userId}] Replicate attempt ${retryCount} failed:`, errorMessage);
-        
+
         if (retryCount > maxRetries) {
           throw error;
         }
-        
+
         // Exponential backoff
         await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
       }
@@ -221,12 +313,14 @@ export async function POST(req: NextRequest) {
     }
 
     let audioData: string;
+    let fileSize: number | undefined;
 
     // Handle different response types
     if (response.audio instanceof ReadableStream) {
       console.log(`[${userId}] Converting stream to base64...`);
       const base64Audio = await streamToBase64(response.audio);
       audioData = `data:audio/mp3;base64,${base64Audio}`;
+      fileSize = getBase64FileSize(base64Audio);
     } else if (typeof response.audio === "string") {
       // Validate URL format
       try {
@@ -242,16 +336,39 @@ export async function POST(req: NextRequest) {
     const processingTime = Date.now() - startTime;
     console.log(`[${userId}] Music generation completed in ${processingTime}ms`);
 
+    // Update record in Appwrite with success
+    if (documentId) {
+      const updateData: Partial<MusicRecord> = {
+        status: "success",
+        processingTime: processingTime.toString(),
+        metadata: JSON.stringify({
+          model: "riffusion/riffusion:8cf61ea6c56afd61d8f5b9ffd14d7c216c0a93844ce2d82ac1c9ecc9c7f24e05",
+          timestamp: new Date().toISOString(),
+          fileSize,
+        })
+      };
+
+      if (audioData.startsWith('data:')) {
+        updateData.audioBase64 = audioData;
+      } else {
+        updateData.audioUrl = audioData;
+      }
+
+      await updateMusicRecord(documentId, updateData);
+    }
+
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
+        id: documentId,
         audio: audioData,
         metadata: {
           prompt: prompt.substring(0, 100), // Truncated for logs
           processingTime,
+          fileSize,
           timestamp: new Date().toISOString()
         }
       }),
-      { 
+      {
         status: 200,
         headers: {
           'Content-Type': 'application/json',
@@ -263,7 +380,7 @@ export async function POST(req: NextRequest) {
 
   } catch (error: unknown) {
     const processingTime = Date.now() - startTime;
-    
+
     // Structured error logging
     const errMsg = typeof error === "object" && error !== null && "message" in error
       ? (error as { message: string }).message
@@ -279,6 +396,19 @@ export async function POST(req: NextRequest) {
       timestamp: new Date().toISOString(),
     });
 
+    // Update record in Appwrite with error
+    if (documentId && userId) {
+      await updateMusicRecord(documentId, {
+        status: "failed",
+        processingTime: processingTime.toString(),
+        error: errMsg,
+        metadata: JSON.stringify({
+          model: "riffusion/riffusion:8cf61ea6c56afd61d8f5b9ffd14d7c216c0a93844ce2d82ac1c9ecc9c7f24e05",
+          timestamp: new Date().toISOString(),
+        })
+      });
+    }
+
     // Handle specific error types
     if (typeof errMsg === "string" && errMsg.includes("timeout")) {
       return createErrorResponse(
@@ -287,7 +417,7 @@ export async function POST(req: NextRequest) {
         "TIMEOUT"
       );
     }
-    
+
     if (typeof errMsg === "string" && errMsg.includes("Rate limit")) {
       return createErrorResponse(
         "Service temporarily unavailable due to high demand",
@@ -311,4 +441,4 @@ export async function POST(req: NextRequest) {
       "INTERNAL_ERROR"
     );
   }
-} 
+}
