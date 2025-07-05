@@ -2,12 +2,19 @@ import OpenAI from "openai";
 import { auth } from "@clerk/nextjs/server";
 import { ID } from "node-appwrite";
 import { createAdminClient } from "@/config/appwrite";
+import { RequestTracker } from "@/config/Track/requestTrack";
+import { NextResponse } from "next/server";
+
+const requestTracker = new RequestTracker();
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_KEY,
 });
 
 export async function POST(req: Request) {
+
+  let requestTrackingResult;
+
   try {
     // Authenticate the user
     const { userId } = await auth();
@@ -17,6 +24,31 @@ export async function POST(req: Request) {
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
         { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    { /**
+      * Check if the user has permission to make a request
+      */ }
+    try {
+      const canMakeRequest = await requestTracker.canMakeRequest(userId);
+      if (!canMakeRequest) {
+        const userStatus = await requestTracker.getUserRequestStatus(userId);
+        return NextResponse.json({
+          error: "Request limit reached",
+          status: userStatus.status,
+          requestCount: userStatus.requestCount,
+        }, {
+          status: 429,
+          headers: { "Content-Type": "application/json" }
+        })
+      }
+
+    } catch (error) {
+      console.error("Error checking user request status:", error);
+      return NextResponse.json(
+        { error: "Internal server error", code: "INTERNAL_ERROR" },
+        { status: 500 }
       );
     }
 
@@ -43,6 +75,22 @@ export async function POST(req: Request) {
       return new Response(
         JSON.stringify({ error: "Invalid message structure. Each message must have 'role' and 'content' properties." }),
         { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    try {
+      requestTrackingResult = await requestTracker.trackRequest(userId);
+      console.log(`Request tracked for user ${userId}:`, requestTrackingResult);
+    } catch (error) {
+      console.error('Error tracking request:', error);
+      // If tracking fails, we should still return an error since the user might have exceeded limits
+      return NextResponse.json(
+        {
+          error: "Request tracking failed",
+          code: "TRACKING_ERROR",
+          message: "Unable to process request. Please try again."
+        },
+        { status: 500 }
       );
     }
 
