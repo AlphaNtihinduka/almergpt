@@ -3,6 +3,9 @@ import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/config/appwrite";
 import { ID } from "node-appwrite";
+import { RequestTracker } from "@/config/Track/requestTrack";
+
+const requestTracker = new RequestTracker();
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_KEY,
@@ -38,6 +41,7 @@ interface ImageGenerationRecord {
 
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
+  let requestTrackingResult;
 
   try {
     // Authenticate the user
@@ -47,6 +51,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "Unauthorized - Please sign in" },
         { status: 401 }
+      );
+    }
+
+    try {
+      const canMakeRequest = await requestTracker.canMakeRequest(userId);
+      if (!canMakeRequest) {
+        const userStatus = await requestTracker.getUserRequestStatus(userId);
+        return NextResponse.json(
+          {
+            error: "Request limit exceeded",
+            code: "REQUEST_LIMIT_EXCEEDED",
+            remainingRequests: userStatus.remainingRequests,
+            status: userStatus.status
+          },
+          { status: 429 }
+        );
+      }
+    } catch (error) {
+      console.error("Error checking user request status:", error);
+      return NextResponse.json(
+        { error: "Internal server error", code: "INTERNAL_ERROR" },
+        { status: 500 }
       );
     }
 
@@ -96,6 +122,24 @@ export async function POST(req: NextRequest) {
         { status: 500 }
       );
     }
+
+    // 6. Track the request (NEW - Track after validation but before OpenAI call)
+    try {
+      requestTrackingResult = await requestTracker.trackRequest(userId);
+      console.log(`Request tracked for user ${userId}:`, requestTrackingResult);
+    } catch (error) {
+      console.error('Error tracking request:', error);
+      // If tracking fails, we should still return an error since the user might have exceeded limits
+      return NextResponse.json(
+        {
+          error: "Request tracking failed",
+          code: "TRACKING_ERROR",
+          message: "Unable to process request. Please try again."
+        },
+        { status: 500 }
+      );
+    }
+
 
     console.log(`Generating ${numAmount} image(s) with resolution ${resolution} for prompt: "${prompt.substring(0, 50)}..."`);
 
