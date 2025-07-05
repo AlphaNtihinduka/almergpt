@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ID } from "node-appwrite";
 import { createAdminClient } from "@/config/appwrite";
+import { RequestTracker } from '@/config/Track/requestTrack';
 
 // Import rate limiter with fallback
 type RateLimitType = { limit: (u: string) => Promise<{ success: boolean; remaining: number; reset: number }> } | null;
@@ -22,6 +23,8 @@ try {
 
 // Simple in-memory rate limiter fallback
 const memoryRateLimit = new Map<string, { count: number; resetTime: number }>();
+
+const requestTracker = new RequestTracker();
 
 const checkMemoryRateLimit = (u: string, limit: number = 50, windowMs: number = 3600000) => {
   const now = Date.now();
@@ -206,6 +209,7 @@ export async function POST(req: NextRequest) {
   const startTime = Date.now();
   let userId: string | null = null;
   let conversationId: string | null = null;
+  let requestTrackingResult: unknown = null;
   try {
     // 1. Authentication
     const authResult = await auth();
@@ -215,6 +219,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "Authentication required", code: "AUTH_REQUIRED" },
         { status: 401 }
+      );
+    }
+
+    try {
+      const canMakeRequest = await requestTracker.canMakeRequest(userId);
+      if (!canMakeRequest) {
+        const userStatus = await requestTracker.getUserRequestStatus(userId);
+        return NextResponse.json(
+          {
+            error: "Request limit exceeded",
+            code: "REQUEST_LIMIT_EXCEEDED",
+            remainingRequests: userStatus.remainingRequests,
+            status: userStatus.status
+          },
+          { status: 429 }
+        );
+      }
+    } catch (error) {
+      console.error("Error checking user request status:", error);
+      return NextResponse.json(
+        { error: "Internal server error", code: "INTERNAL_ERROR" },
+        { status: 500 }
       );
     }
 
@@ -294,6 +320,24 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    // 6. Track the request (NEW - Track after validation but before OpenAI call)
+    try {
+      requestTrackingResult = await requestTracker.trackRequest(userId);
+      console.log(`Request tracked for user ${userId}:`, requestTrackingResult);
+    } catch (error) {
+      console.error('Error tracking request:', error);
+      // If tracking fails, we should still return an error since the user might have exceeded limits
+      return NextResponse.json(
+        {
+          error: "Request tracking failed",
+          code: "TRACKING_ERROR",
+          message: "Unable to process request. Please try again."
+        },
+        { status: 500 }
+      );
+    }
+
 
     // 5. Prepare messages with dynamic system prompt
     const systemMessage = getSystemMessage(codeType);
@@ -420,37 +464,95 @@ export async function POST(req: NextRequest) {
 }
 
 // Health check endpoint
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    // Basic OpenAI connectivity check
-    const testCompletion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: "Hello" }],
-      max_tokens: 5,
-    });
+    const { searchParams } = new URL(req.url);
+    const action = searchParams.get('action');
 
-    // Check Redis status
-    const redisStatus = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
-      ? "configured"
-      : "using_memory_fallback";
+    // Health check
+    if (action === 'health') {
+      const testCompletion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "Hello" }],
+        max_tokens: 5,
+      });
+
+      const redisStatus = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
+        ? "configured"
+        : "using_memory_fallback";
+
+      return NextResponse.json(
+        {
+          status: "healthy",
+          service: "code-generation-api",
+          openai: "connected",
+          rateLimit: redisStatus,
+          timestamp: new Date().toISOString(),
+          version: "2.0.0"
+        },
+        { status: 200 }
+      );
+    }
+
+    // Check request status
+    if (action === 'status') {
+      const authResult = await auth();
+      const userId = authResult?.userId;
+
+      if (!userId) {
+        return NextResponse.json(
+          { error: "Authentication required", code: "AUTH_REQUIRED" },
+          { status: 401 }
+        );
+      }
+
+      const status = await requestTracker.getUserRequestStatus(userId);
+      return NextResponse.json(
+        {
+          success: true,
+          requestInfo: status,
+          timestamp: new Date().toISOString()
+        },
+        { status: 200 }
+      );
+    }
+
+    // Reset requests (for subscription activation)
+    if (action === 'reset') {
+      const authResult = await auth();
+      const userId = authResult?.userId;
+
+      if (!userId) {
+        return NextResponse.json(
+          { error: "Authentication required", code: "AUTH_REQUIRED" },
+          { status: 401 }
+        );
+      }
+
+      // You might want to add additional authorization here
+      // to ensure only subscribed users can reset their requests
+
+      const result = await requestTracker.resetUserRequests(userId);
+      return NextResponse.json(
+        {
+          success: true,
+          message: "Request limit reset successfully",
+          timestamp: new Date().toISOString()
+        },
+        { status: 200 }
+      );
+    }
 
     return NextResponse.json(
-      {
-        status: "healthy",
-        service: "code-generation-api",
-        openai: "connected",
-        rateLimit: redisStatus,
-        timestamp: new Date().toISOString(),
-        version: "2.0.0"
-      },
-      { status: 200 }
+      { error: "Invalid action", code: "INVALID_ACTION" },
+      { status: 400 }
     );
+
   } catch (error) {
     return NextResponse.json(
       {
-        status: "unhealthy",
+        status: "error",
         service: "code-generation-api",
-        openai: "disconnected",
         error: error instanceof Error ? error.message : "Unknown error",
         timestamp: new Date().toISOString()
       },
