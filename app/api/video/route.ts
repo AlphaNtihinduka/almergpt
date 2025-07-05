@@ -6,6 +6,9 @@ import { NextRequest, NextResponse } from "next/server";
 import Redis from "ioredis";
 import { createAdminClient } from "@/config/appwrite";
 import { ID, Query } from "node-appwrite";
+import { RequestTracker } from "@/config/Track/requestTrack";
+
+const requestTracker = new RequestTracker();
 
 // Initialize clients
 const replicate = new Replicate({
@@ -58,6 +61,9 @@ interface VideoGenerationResponse {
     resolution?: string;
     fps?: number;
   };
+  // Request tracking info
+  remainingRequests?: number;
+  requestCount?: number;
 }
 
 // Appwrite document structure
@@ -87,13 +93,20 @@ interface VideoGenerationDocument {
   seed?: number;
   processing_time?: number;
   progress?: number;
+  // Request tracking fields
+  request_count?: number;
+  remaining_requests?: number;
 }
 
-// Save to Appwrite
+// Save to Appwrite with request tracking info
 async function saveToAppwrite(
   userId: string,
   input: VideoGenerationInput,
   response: VideoGenerationResponse,
+  requestInfo?: {
+    requestCount: number;
+    remainingRequests: number;
+  },
   additionalData?: {
     modelVersion?: string;
     seed?: number;
@@ -127,7 +140,10 @@ async function saveToAppwrite(
       model_version: additionalData?.modelVersion,
       seed: additionalData?.seed,
       processing_time: additionalData?.processingTime,
-      progress: additionalData?.progress
+      progress: additionalData?.progress,
+      // Add request tracking info
+      request_count: requestInfo?.requestCount,
+      remaining_requests: requestInfo?.remainingRequests
     };
 
     const { databases } = await createAdminClient();
@@ -148,7 +164,9 @@ async function saveToAppwrite(
       status: result.status,
       createdAt: result.created_at,
       updatedAt: result.updated_at,
-      metadata: result.metadata ? JSON.parse(result.metadata) : undefined
+      metadata: result.metadata ? JSON.parse(result.metadata) : undefined,
+      requestCount: result.request_count,
+      remainingRequests: result.remaining_requests
     });
   } catch (error) {
     console.error("Failed to save to Appwrite:", error);
@@ -182,19 +200,16 @@ async function updateAppwriteDocument(documentId: string, response: Partial<Vide
 // Get document from Appwrite by prediction ID
 async function getAppwriteDocumentByPredictionId(predictionId: string): Promise<any> {
   try {
-
     const { databases } = await createAdminClient();
 
     const response = await databases.listDocuments(
       process.env.APPWRITE_DATABASE_ID!,
       process.env.APPWRITE_VIDEO_GENERATIONS_COLLECTION_ID!,
       [
-        // Add query filter for prediction_id
         Query.equal('prediction_id', predictionId)
       ]
     );
 
-    // Filter manually since we might not have the Query import
     const document = response.documents.find(doc => doc.prediction_id === predictionId);
     return document || null;
   } catch (error) {
@@ -278,14 +293,14 @@ function validateInput(body: any): { isValid: boolean; error?: string; data?: Vi
   // Optimized defaults for speed
   const validatedData: VideoGenerationInput = {
     prompt: prompt.trim(),
-    fps: fps && typeof fps === "number" && fps > 0 && fps <= 30 ? fps : 15, // Lower default FPS for speed
-    width: width && typeof width === "number" && width > 0 ? Math.min(width, 1024) : 512, // Smaller default resolution
+    fps: fps && typeof fps === "number" && fps > 0 && fps <= 30 ? fps : 15,
+    width: width && typeof width === "number" && width > 0 ? Math.min(width, 1024) : 512,
     height: height && typeof height === "number" && height > 0 ? Math.min(height, 1024) : 512,
-    guidance_scale: guidance_scale && typeof guidance_scale === "number" ? Math.max(1, Math.min(guidance_scale, 15)) : 7.5, // Lower for speed
+    guidance_scale: guidance_scale && typeof guidance_scale === "number" ? Math.max(1, Math.min(guidance_scale, 15)) : 7.5,
     negative_prompt: negative_prompt && typeof negative_prompt === "string" ? negative_prompt.trim() : "blurry, low quality",
-    duration: duration && typeof duration === "number" && duration > 0 ? Math.min(duration, 5) : 2, // Shorter default duration
+    duration: duration && typeof duration === "number" && duration > 0 ? Math.min(duration, 5) : 2,
     priority: priority && ['fast', 'quality', 'ultra_fast'].includes(priority) ? priority : 'ultra_fast',
-    num_inference_steps: num_inference_steps && typeof num_inference_steps === "number" ? Math.min(num_inference_steps, 50) : 20 // Fewer steps for speed
+    num_inference_steps: num_inference_steps && typeof num_inference_steps === "number" ? Math.min(num_inference_steps, 50) : 20
   };
 
   return { isValid: true, data: validatedData };
@@ -324,7 +339,7 @@ async function generateVideo(input: VideoGenerationInput, userId: string): Promi
 
     // Choose model based on priority
     const modelVersion = VIDEO_MODELS[input.priority!];
-    const seed = Math.floor(Math.random() * 100000); // Random seed for variability
+    const seed = Math.floor(Math.random() * 100000);
 
     const replicateInput = {
       fps: input.fps!,
@@ -335,8 +350,7 @@ async function generateVideo(input: VideoGenerationInput, userId: string): Promi
       negative_prompt: input.negative_prompt!,
       num_inference_steps: input.num_inference_steps!,
       seed: Math.floor(Math.random() * 100000),
-      // Optimization parameters
-      scheduler: "DPMSolverMultistep", // Faster scheduler
+      scheduler: "DPMSolverMultistep",
       enable_memory_efficient_attention: true,
     };
 
@@ -345,8 +359,6 @@ async function generateVideo(input: VideoGenerationInput, userId: string): Promi
       version: modelVersion,
       input: replicateInput,
     });
-
-    console.log("Prediction created:", prediction);
 
     console.log("Prediction started:", prediction.id);
 
@@ -365,13 +377,6 @@ async function generateVideo(input: VideoGenerationInput, userId: string): Promi
       }
     };
 
-    // Save to Appwrite with additional data
-    await saveToAppwrite(userId, input, response, {
-      modelVersion,
-      seed,
-      processingTime
-    });
-
     return response;
 
   } catch (error) {
@@ -382,9 +387,6 @@ async function generateVideo(input: VideoGenerationInput, userId: string): Promi
       error: error instanceof Error ? error.message : "Unknown error occurred",
       status: "failed"
     };
-
-    // Save error to Appwrite
-    await saveToAppwrite(userId, input, errorResponse);
 
     return errorResponse;
   } finally {
@@ -403,7 +405,7 @@ function getEstimatedWaitTime(priority: string): number {
   return baseTimes[priority as keyof typeof baseTimes] || 30;
 }
 
-// Main POST handler - now async and non-blocking
+// Main POST handler - Enhanced with complete request tracking
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     // Auth check
@@ -446,25 +448,87 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const validatedInput = validation.data!;
 
+    // ===== ENHANCED REQUEST TRACKING =====
+    let requestInfo: { requestCount: number; remainingRequests: number; };
+
+    try {
+      // Check if user can make a request
+      const canMakeRequest = await requestTracker.canMakeRequest(userId);
+      if (!canMakeRequest) {
+        const userStatus = await requestTracker.getUserRequestStatus(userId);
+
+        // Log blocked request attempt
+        console.log(`Request blocked for user ${userId}:`, {
+          requestCount: userStatus.requestCount,
+          remainingRequests: userStatus.remainingRequests,
+          status: userStatus.status
+        });
+
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Request limit exceeded",
+            code: "REQUEST_LIMIT_EXCEEDED",
+            remainingRequests: userStatus.remainingRequests,
+            requestCount: userStatus.requestCount,
+            status: userStatus.status,
+            message: "You have reached your request limit. Please subscribe to continue."
+          },
+          { status: 429 }
+        );
+      }
+
+      // Track the request (increments counter)
+      const trackingResult = await requestTracker.trackRequest(userId);
+
+      requestInfo = {
+        requestCount: trackingResult.requestCount,
+        remainingRequests: trackingResult.remainingRequests
+      };
+
+      console.log(`Request tracked for user ${userId}:`, {
+        requestCount: trackingResult.requestCount,
+        remainingRequests: trackingResult.remainingRequests,
+        status: trackingResult.status
+      });
+
+    } catch (error) {
+      console.error("Error in request tracking:", error);
+
+      // For tracking errors, we still allow the request but log the issue
+      // This prevents service disruption due to tracking issues
+      const userStatus = await requestTracker.getUserRequestStatus(userId);
+      requestInfo = {
+        requestCount: userStatus.requestCount,
+        remainingRequests: userStatus.remainingRequests
+      };
+
+      console.warn("Proceeding with request despite tracking error");
+    }
+
     // Check cache first
     const cacheKey = generateCacheKey(validatedInput);
     const cachedVideo = await checkCache(cacheKey);
 
     if (cachedVideo) {
       console.log("Cache hit for user:", userId);
+
       const cachedResponse: VideoGenerationResponse = {
         success: true,
         video: cachedVideo,
         status: "succeeded",
         cached: true,
+        requestCount: requestInfo.requestCount,
+        remainingRequests: requestInfo.remainingRequests,
         metadata: {
           format: "mp4",
           resolution: `${validatedInput.width}x${validatedInput.height}`,
           fps: validatedInput.fps
         }
       };
-      // Save cached result to Appwrite
-      await saveToAppwrite(userId, validatedInput, cachedResponse);
+
+      // Save cached result to Appwrite with request tracking info
+      await saveToAppwrite(userId, validatedInput, cachedResponse, requestInfo);
 
       return NextResponse.json(cachedResponse);
     }
@@ -473,16 +537,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const activeJobs = await getActiveJobsCount();
     if (activeJobs >= MAX_CONCURRENT_GENERATIONS) {
       const queuePosition = await addToQueue(userId, validatedInput);
-      const queuedResponse = {
+
+      const queuedResponse: VideoGenerationResponse = {
         success: true,
         status: "queued",
         queuePosition,
         estimatedWaitTime: queuePosition * 10,
-        message: "Request queued due to high demand"
+        requestCount: requestInfo.requestCount,
+        remainingRequests: requestInfo.remainingRequests
       };
 
-      // Save queued status to Appwrite
-      await saveToAppwrite(userId, validatedInput, queuedResponse);
+      // Save queued status to Appwrite with request tracking info
+      await saveToAppwrite(userId, validatedInput, queuedResponse, requestInfo);
 
       return NextResponse.json(queuedResponse);
     }
@@ -492,16 +558,23 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       ? getMockResponse()
       : await generateVideo(validatedInput, userId);
 
-    // Save mock result to Appwrite if using mock
-    if (USE_MOCK) {
-      await saveToAppwrite(userId, validatedInput, result);
-    }
+    // Add request tracking info to response
+    result.requestCount = requestInfo.requestCount;
+    result.remainingRequests = requestInfo.remainingRequests;
 
-    // For successful generations, we return the prediction ID for polling
-    if (result.success && result.predictionId) {
-      console.log("Video generation initiated:", {
+    // Save result to Appwrite with request tracking info
+    await saveToAppwrite(userId, validatedInput, result, requestInfo, {
+      modelVersion: USE_MOCK ? "mock" : VIDEO_MODELS[validatedInput.priority!],
+      seed: USE_MOCK ? 12345 : Math.floor(Math.random() * 100000)
+    });
+
+    // Log successful request
+    if (result.success) {
+      console.log("Video generation request successful:", {
         userId,
-        predictionId: result.predictionId
+        predictionId: result.predictionId,
+        requestCount: requestInfo.requestCount,
+        remainingRequests: requestInfo.remainingRequests
       });
     }
 
@@ -532,6 +605,27 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     const { searchParams } = new URL(req.url);
     const predictionId = searchParams.get("predictionId");
+    const checkStatus = searchParams.get("checkStatus"); // New parameter for status-only requests
+
+    // If just checking user status (not a specific prediction)
+    if (checkStatus === "true") {
+      try {
+        const userStatus = await requestTracker.getUserRequestStatus(userId);
+        return NextResponse.json({
+          success: true,
+          requestCount: userStatus.requestCount,
+          remainingRequests: userStatus.remainingRequests,
+          canMakeRequest: userStatus.canMakeRequest,
+          status: userStatus.status
+        });
+      } catch (error) {
+        console.error("Error getting user status:", error);
+        return NextResponse.json(
+          { success: false, error: "Failed to get user status" },
+          { status: 500 }
+        );
+      }
+    }
 
     if (!predictionId) {
       return NextResponse.json(
@@ -626,6 +720,55 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     console.error("Status check error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to check status" },
+      { status: 500 }
+    );
+  }
+}
+
+// New endpoint for resetting user requests (for subscription upgrades)
+export async function PUT(req: NextRequest): Promise<NextResponse> {
+  try {
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const { searchParams } = new URL(req.url);
+    const action = searchParams.get("action");
+
+    if (action === "reset") {
+      try {
+        const result = await requestTracker.resetUserRequests(userId);
+        console.log(`Requests reset for user ${userId}:`, result);
+
+        return NextResponse.json({
+          success: true,
+          message: "User requests reset successfully",
+          requestCount: 0,
+          remainingRequests: 5,
+          canMakeRequest: true
+        });
+      } catch (error) {
+        console.error("Error resetting user requests:", error);
+        return NextResponse.json(
+          { success: false, error: "Failed to reset user requests" },
+          { status: 500 }
+        );
+      }
+    }
+
+    return NextResponse.json(
+      { success: false, error: "Invalid action" },
+      { status: 400 }
+    );
+
+  } catch (error) {
+    console.error("PUT request error:", error);
+    return NextResponse.json(
+      { success: false, error: "Internal server error" },
       { status: 500 }
     );
   }
