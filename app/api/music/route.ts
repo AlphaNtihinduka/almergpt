@@ -1,9 +1,12 @@
 import Replicate from "replicate";
 import { auth } from "@clerk/nextjs/server";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ID } from "node-appwrite";
 import { createAdminClient } from "@/config/appwrite";
+import { RequestTracker } from "@/config/Track/requestTrack";
+
+const requestTracker = new RequestTracker();
 
 // Environment validation
 const envSchema = z.object({
@@ -192,6 +195,7 @@ export async function POST(req: NextRequest) {
   const startTime = Date.now();
   let userId: string | null = null;
   let documentId: string | null = null;
+  let requestTrackingResult: unknown;
 
   try {
     // Authentication
@@ -200,6 +204,34 @@ export async function POST(req: NextRequest) {
 
     if (!userId) {
       return createErrorResponse("Authentication required", 401, "UNAUTHORIZED");
+    }
+
+    // Check if user can make a request (but don't track it yet)
+    try {
+      const canMakeRequest = await requestTracker.canMakeRequest(userId);
+      if (!canMakeRequest) {
+        const userStatus = await requestTracker.getUserRequestStatus(userId);
+        return new Response(
+          JSON.stringify({
+            error: "Request limit reached",
+            status: userStatus.status,
+            requestCount: userStatus.requestCount,
+            remainingRequests: userStatus.remainingRequests,
+            message: "You've reached your request limit. Please subscribe to continue."
+          }),
+          {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              'X-RateLimit-Limit': '5',
+              'X-RateLimit-Remaining': userStatus.remainingRequests.toString()
+            }
+          }
+        );
+      }
+    } catch (error) {
+      console.error("Error checking user request status:", error);
+      return createErrorResponse("Internal server error", 500, "INTERNAL_ERROR");
     }
 
     // Rate limiting
@@ -253,6 +285,24 @@ export async function POST(req: NextRequest) {
         "INAPPROPRIATE_CONTENT"
       );
     }
+
+    // 6. Track the request (NEW - Track after validation but before OpenAI call)
+    try {
+      requestTrackingResult = await requestTracker.trackRequest(userId);
+      console.log(`Request tracked for user ${userId}:`, requestTrackingResult);
+    } catch (error) {
+      console.error('Error tracking request:', error);
+      // If tracking fails, we should still return an error since the user might have exceeded limits
+      return NextResponse.json(
+        {
+          error: "Request tracking failed",
+          code: "TRACKING_ERROR",
+          message: "Unable to process request. Please try again."
+        },
+        { status: 500 }
+      );
+    }
+
 
     console.log(`[${userId}] Music generation started: "${prompt.substring(0, 50)}..."`);
 
