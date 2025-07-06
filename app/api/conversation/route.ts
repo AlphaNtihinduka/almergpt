@@ -133,7 +133,6 @@ export async function POST(req: Request) {
 
       const { databases } = await createAdminClient();
       await databases.createDocument(process.env.APPWRITE_DATABASE_ID!, process.env.APPWRITE_COLLECTION_ID_MESSAGES!, currentConversationId, conversationData);
-      console.log("Conversation saved successfully:", conversationData);
     } catch (error) {
       console.error("Error saving conversation:", error);
     }
