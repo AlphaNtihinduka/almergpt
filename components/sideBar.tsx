@@ -11,10 +11,11 @@ import {
     VideoIcon,
     Sparkles,
     ChevronRight,
-    Zap
+    // Zap
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
+import RequestFooter from "./RequestFooter";
 
 const routes = [
     {
@@ -213,7 +214,7 @@ const SideBar = () => {
                 </div>
 
                 {/* Footer */}
-                <div className="p-4 border-t border-slate-700/50">
+                {/* <div className="p-4 border-t border-slate-700/50">
                     <div className="flex items-center gap-3 p-3 rounded-xl bg-gradient-to-r from-slate-800/50 to-slate-700/50 border border-slate-600/30">
                         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600">
                             <Zap className="w-4 h-4 text-white" />
@@ -226,7 +227,8 @@ const SideBar = () => {
                         </div>
                         <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
                     </div>
-                </div>
+                </div> */}
+                <RequestFooter />
             </div>
         </div>
     );
