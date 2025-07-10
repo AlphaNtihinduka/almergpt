@@ -4,65 +4,55 @@ import React, { useEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import {
-  Brain, Zap, BarChart3, ShieldCheck, Code, ArrowRight, ChevronDown,
+  Brain, BarChart3, ShieldCheck, Code, ArrowRight, ChevronDown,
   Bot, Users, Database, Settings, Crown, Star, Sparkles,
-  TrendingUp, Award, Target, Rocket, CheckCircle, User
+  Rocket, CheckCircle,
+  MessageSquare,
+  Image,
+  Video,
+  Music,
+  Film,
+  Headphones,
+  Palette,
+  Terminal,
+  Activity,
+  Cpu
 } from 'lucide-react';
 import LandingNavbar from '@/components/LandingNavbar';
+import { useAuth, useUser } from '@clerk/nextjs';
+import { useRouter } from 'next/navigation';
 
 // Register GSAP plugins
 gsap.registerPlugin(ScrollTrigger);
 
 
-interface User {
-  firstName: string;
-  lastName: string;
-  emailAddress: string;
-  profileImageUrl: string;
-  publicMetadata: {
-    plan: string;
-    joinedDate: string;
-  };
-}
-
 // Mock authentication context - replace with actual Clerk hooks
-const useAuth = () => {
-  const [isSignedIn, setIsSignedIn] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
+const useAuthenticated = () => {
+  const { user, isLoaded: userLoaded } = useUser();
+  const { isSignedIn, signOut: clerkSignOut } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Simulate authentication check
-    const timer = setTimeout(() => {
-      // Mock user data - replace with actual Clerk user data
-      const mockUser = {
-        firstName: "Alex",
-        lastName: "Thompson",
-        emailAddress: "alex@company.com",
-        profileImageUrl: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face",
-        publicMetadata: {
-          plan: "premium",
-          joinedDate: "2020-01-15"
-        }
-      };
-
-      // Toggle this to test authenticated/unauthenticated states
-      const authenticated = Math.random() > 0.5; // Random for demo
-
-      setIsSignedIn(authenticated);
-      setUser(authenticated ? mockUser : null);
+    // Wait for Clerk to finish loading
+    if (userLoaded) {
       setIsLoading(false);
-    }, 1000);
+    }
+  }, [userLoaded]);
 
-    return () => clearTimeout(timer);
-  }, []);
-
-  const signOut = () => {
-    setIsSignedIn(false);
-    setUser(null);
+  const signOut = async () => {
+    try {
+      await clerkSignOut();
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
   };
 
-  return { isSignedIn, user, isLoading, signOut };
+  return {
+    isSignedIn: isSignedIn || false,
+    user: user || null,
+    isLoading,
+    signOut
+  };
 };
 
 // Helper component for icons
@@ -76,38 +66,38 @@ const IconWrapper: React.FC<{ children: React.ReactNode; className?: string }> =
 const premiumFeaturesData = [
   {
     icon: <Crown size={32} className="text-yellow-400" />,
-    title: 'Enterprise AI Models',
-    description: 'Access to GPT-4 Turbo, Claude-3 Opus, and proprietary models trained on 20+ years of industry data.',
+    title: 'Advanced Conversation Models',
+    description: 'Access to GPT-4 Turbo, Claude-3 Opus, and specialized conversational AI models for complex dialogues.',
     premium: true
   },
   {
-    icon: <TrendingUp size={32} className="text-emerald-400" />,
-    title: 'Advanced Analytics Suite',
-    description: 'Real-time business intelligence with predictive modeling and automated insight generation.',
+    icon: <Palette size={32} className="text-emerald-400" />,
+    title: 'Professional Image Generation',
+    description: 'High-resolution image creation with style controls, batch processing, and commercial licensing.',
     premium: true
   },
   {
-    icon: <Rocket size={32} className="text-purple-400" />,
+    icon: <Film size={32} className="text-purple-400" />,
+    title: 'HD Video Production',
+    description: 'Generate professional-quality videos with custom branding, longer duration, and export options.',
+    premium: true
+  },
+  {
+    icon: <Headphones size={32} className="text-cyan-400" />,
+    title: 'Studio-Quality Music',
+    description: 'Create full-length compositions with instrument separation, mixing controls, and royalty-free licensing.',
+    premium: true
+  },
+  {
+    icon: <Terminal size={32} className="text-blue-400" />,
+    title: 'Advanced Code Solutions',
+    description: 'Complex algorithm generation, code optimization, debugging assistance, and enterprise-level integrations.',
+    premium: true
+  },
+  {
+    icon: <Settings size={32} className="text-red-400" />,
     title: 'Custom AI Workflows',
-    description: 'Build sophisticated automation pipelines with our visual workflow designer and API integrations.',
-    premium: true
-  },
-  {
-    icon: <Award size={32} className="text-cyan-400" />,
-    title: 'Priority Support & Training',
-    description: 'Dedicated success manager, 24/7 support, and personalized AI implementation consulting.',
-    premium: true
-  },
-  {
-    icon: <Brain size={32} className="text-blue-400" />,
-    title: 'Neural Network Training',
-    description: 'Train custom models on your data with our advanced ML infrastructure and expert guidance.',
-    premium: true
-  },
-  {
-    icon: <Target size={32} className="text-red-400" />,
-    title: 'Multi-Tenant Architecture',
-    description: 'Enterprise-grade security with isolated environments and compliance certifications.',
+    description: 'Build automated pipelines combining all AI features with API access and webhook integrations.',
     premium: true
   }
 ];
@@ -115,27 +105,33 @@ const premiumFeaturesData = [
 // Standard features for non-authenticated users
 const standardFeaturesData = [
   {
-    icon: <Brain size={32} className="text-cyan-400" />,
-    title: 'Intelligent Automation',
-    description: 'Streamline complex workflows with our cutting-edge AI automation engine.',
+    icon: <MessageSquare size={32} className="text-cyan-400" />,
+    title: 'Conversation',
+    description: 'Engage in intelligent text-to-text conversations with advanced AI for any topic or task.',
     premium: false
   },
   {
-    icon: <BarChart3 size={32} className="text-green-400" />,
-    title: 'Predictive Analytics',
-    description: 'Leverage AI-driven insights to forecast trends and make data-backed decisions.',
+    icon: <Image size={32} className="text-green-400" />,
+    title: 'Image Generation',
+    description: 'Transform your ideas into stunning visuals with powerful text-to-image AI technology.',
     premium: false
   },
   {
-    icon: <Zap size={32} className="text-yellow-400" />,
-    title: 'Hyper-Personalization',
-    description: 'Deliver unique customer experiences at scale with AI-powered personalization.',
+    icon: <Video size={32} className="text-yellow-400" />,
+    title: 'Video Creation',
+    description: 'Generate professional videos from text prompts with cutting-edge text-to-video AI.',
     premium: false
   },
   {
-    icon: <ShieldCheck size={32} className="text-purple-400" />,
-    title: 'Enhanced Security',
-    description: 'Protect your assets with AI-driven threat detection and anomaly identification.',
+    icon: <Music size={32} className="text-purple-400" />,
+    title: 'Music Composition',
+    description: 'Create original music and soundtracks from text descriptions using AI composition tools.',
+    premium: false
+  },
+  {
+    icon: <Code size={32} className="text-blue-400" />,
+    title: 'Code Generation',
+    description: 'Solve complex programming problems and generate optimized code with AI-powered algorithms.',
     premium: false
   }
 ];
@@ -144,7 +140,7 @@ const standardFeaturesData = [
 const App: React.FC = () => {
   const [darkMode, setDarkMode] = useState(true);
   const appRef = useRef<HTMLDivElement>(null);
-  const { isSignedIn, user, isLoading } = useAuth();
+  const { isSignedIn, user, isLoading } = useAuthenticated();
 
   useEffect(() => {
     if (darkMode) {
@@ -195,10 +191,10 @@ const App: React.FC = () => {
         setDarkMode={setDarkMode}
       />
       <main>
-        <HeroSection isSignedIn={isSignedIn} user={user} />
-        <FeaturesSection isSignedIn={isSignedIn} />
+        <HeroSection isSignedIn={isSignedIn} />
+        < FeaturesSection isSignedIn={isSignedIn} />
         <ShowcaseSection />
-        {isSignedIn && user && <PremiumDashboardPreview user={user} />}
+        {isSignedIn && user && <PremiumDashboardPreview />}
         <CallToActionSection scrollToSection={scrollToSection} />
       </main>
       <Footer />
@@ -206,12 +202,16 @@ const App: React.FC = () => {
   );
 };
 
-const HeroSection: React.FC<{ isSignedIn: boolean; user: User | null }> = ({ isSignedIn, user }) => {
+const HeroSection: React.FC<{ isSignedIn: boolean }> = ({ isSignedIn }) => {
   const heroRef = useRef<HTMLElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const subtitleRef = useRef<HTMLParagraphElement>(null);
   const ctaButtonRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLDivElement>(null);
+
+  const { user } = useAuthenticated();
+
+  // const { isSignedIn, user } = currentUser();
 
   useEffect(() => {
     const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
@@ -259,8 +259,8 @@ const HeroSection: React.FC<{ isSignedIn: boolean; user: User | null }> = ({ isS
 
   const getExperienceYears = () => {
     if (!isSignedIn || !user?.publicMetadata?.joinedDate) return 0;
-    const joinedYear = new Date(user.publicMetadata.joinedDate).getFullYear();
-    return new Date().getFullYear() - joinedYear;
+    // const joinedYear = new Date(user).getFullYear();
+    return new Date().getFullYear();
   };
 
   return (
@@ -467,7 +467,7 @@ const FeaturesSection: React.FC<{ isSignedIn: boolean }> = ({ isSignedIn }) => {
   );
 };
 
-// Showcase Section Component
+// Improved Showcase Section Component
 const ShowcaseSection: React.FC = () => {
   const sectionRef = useRef<HTMLElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -492,10 +492,10 @@ const ShowcaseSection: React.FC = () => {
             }
           }
         );
-        // Subtle looping animation for list items
+        // Enhanced subtle looping animation for list items
         gsap.to(item.querySelector('.status-indicator'), {
-          opacity: 0.5, // Flicker effect (use yoyo for flicker)
-          duration: 0.75 + Math.random(), // Randomize duration slightly
+          opacity: 0.5,
+          duration: 0.75 + Math.random(),
           repeat: -1,
           yoyo: true,
           ease: "sine.inOut",
@@ -505,31 +505,42 @@ const ShowcaseSection: React.FC = () => {
     });
   }, []);
 
-  // Define showcaseItems for the status list
+  // Enhanced showcaseItems aligned with AI platform features
   const showcaseItems = [
     {
       id: 1,
-      title: "Database Uptime",
-      value: "99.99%",
-      statusColor: "bg-green-400"
+      title: "Conversation Models",
+      value: "99.8%",
+      statusColor: "bg-cyan-400",
+      description: "Response accuracy"
     },
     {
       id: 2,
-      title: "API Response Time",
-      value: "120ms",
-      statusColor: "bg-green-400"
+      title: "Image Generation",
+      value: "2.1s",
+      statusColor: "bg-green-400",
+      description: "Average render time"
     },
     {
       id: 3,
-      title: "AI Model Accuracy",
-      value: "98.7%",
-      statusColor: "bg-yellow-400"
+      title: "Video Processing",
+      value: "94.2%",
+      statusColor: "bg-yellow-400",
+      description: "Quality score"
     },
     {
       id: 4,
-      title: "Security Status",
-      value: "All Secure",
-      statusColor: "bg-green-400"
+      title: "Music Synthesis",
+      value: "Active",
+      statusColor: "bg-purple-400",
+      description: "Neural networks"
+    },
+    {
+      id: 5,
+      title: "Code Generation",
+      value: "97.5%",
+      statusColor: "bg-blue-400",
+      description: "Compilation success"
     }
   ];
 
@@ -538,94 +549,138 @@ const ShowcaseSection: React.FC = () => {
       <div className="container mx-auto px-6 lg:px-8">
         <div className="text-center mb-12 sm:mb-16">
           <h2 ref={titleRef} className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-4">
-            AI in Action: A Glimpse Under the Hood
+            AI Platform Performance: Real-Time Insights
           </h2>
           <p className="text-lg text-slate-300 dark:text-slate-400 max-w-2xl mx-auto">
-            Witness the elegance and power of our AI core. Real-time insights, dynamic processing, and robust architecture.
+            Experience the power of our multi-modal AI platform. Live performance metrics from conversation, image, video, music, and code generation engines.
           </p>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-          {/* Left Column: Abstract AI Visualization */}
-          <div className="bg-slate-800/50 dark:bg-slate-800 p-6 sm:p-8 rounded-xl shadow-2xl relative overflow-hidden">
-            <h3 className="text-2xl font-semibold mb-6 text-white dark:text-white">AI Core Monitor</h3>
+        <div className="grid md:grid-cols-2 gap-8 max-w-6xl mx-auto">
+          {/* Left Column: Enhanced AI Visualization */}
+          <div className="bg-slate-800/50 dark:bg-slate-800 p-6 sm:p-8 rounded-xl shadow-2xl relative overflow-hidden border border-slate-700/50">
+            <h3 className="text-2xl font-semibold mb-6 text-white dark:text-white flex items-center">
+              <Cpu size={28} className="mr-3 text-cyan-400" />
+              AI Core Monitor
+            </h3>
             <div className="relative h-64 sm:h-80">
-              {/* Animated background shapes */}
-              {[...Array(5)].map((_, i) => (
+              {/* Enhanced animated background shapes with different colors for each AI type */}
+              {[...Array(8)].map((_, i) => (
                 <div
                   key={i}
-                  className="absolute rounded-full filter blur-sm"
+                  className="absolute rounded-full filter blur-sm animate-pulse-slow"
                   style={{
-                    width: `${Math.random() * 60 + 20}px`,
-                    height: `${Math.random() * 60 + 20}px`,
-                    left: `${Math.random() * 80}%`,
-                    top: `${Math.random() * 80}%`,
-                    background: `rgba(${Math.random() * 100 + 100}, ${Math.random() * 155 + 100}, 255, ${Math.random() * 0.3 + 0.2})`,
-                    animation: `float ${Math.random() * 5 + 5}s ease-in-out infinite alternate`,
+                    width: `${Math.random() * 40 + 30}px`,
+                    height: `${Math.random() * 40 + 30}px`,
+                    left: `${Math.random() * 70 + 10}%`,
+                    top: `${Math.random() * 70 + 10}%`,
+                    background: [
+                      'rgba(34, 211, 238, 0.3)', // cyan - conversation
+                      'rgba(34, 197, 94, 0.3)',  // green - image
+                      'rgba(251, 191, 36, 0.3)', // yellow - video
+                      'rgba(168, 85, 247, 0.3)', // purple - music
+                      'rgba(59, 130, 246, 0.3)', // blue - code
+                    ][i % 5],
+                    animation: `float ${Math.random() * 4 + 6}s ease-in-out infinite alternate`,
+                    animationDelay: `${i * 0.5}s`
                   }}
                 ></div>
               ))}
-              <Code size={80} className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-cyan-500/40 dark:text-cyan-500/60" />
+
+              {/* Central AI brain icon with rotation */}
+              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+                <Brain size={80} className="text-cyan-500/60 dark:text-cyan-500/80 animate-spin-slow" />
+                <div className="absolute inset-0 rounded-full border-2 border-cyan-400/30 animate-ping-slow"></div>
+              </div>
+
+              {/* Floating AI feature icons */}
+              <MessageSquare size={24} className="absolute top-4 right-4 text-cyan-400/70 animate-pulse-slower" />
+              <Image size={24} className="absolute bottom-4 left-4 text-green-400/70 animate-pulse-slow" />
+              <Video size={24} className="absolute top-4 left-4 text-yellow-400/70 animate-pulse-slower" />
+              <Music size={24} className="absolute bottom-4 right-4 text-purple-400/70 animate-pulse-slow" />
+              <Code size={24} className="absolute top-1/2 right-8 text-blue-400/70 animate-pulse-slower" />
             </div>
-            <p className="text-sm text-slate-400 dark:text-slate-500 mt-4">Conceptual representation of AI data streams and processing nodes.</p>
-            {/* CSS for float animation */}
+            <p className="text-sm text-slate-400 dark:text-slate-500 mt-4">
+              Live visualization of multi-modal AI processing nodes and data streams across all platform services.
+            </p>
+
+            {/* Enhanced CSS animations */}
             <style jsx global>{`
               @keyframes float {
                 0% { transform: translateY(0px) translateX(0px) rotate(0deg); }
-                50% { transform: translateY(${Math.random() * 20 - 10}px) translateX(${Math.random() * 20 - 10}px) rotate(${Math.random() * 10 - 5}deg); }
+                50% { transform: translateY(${Math.random() * 30 - 15}px) translateX(${Math.random() * 30 - 15}px) rotate(${Math.random() * 15 - 7.5}deg); }
                 100% { transform: translateY(0px) translateX(0px) rotate(0deg); }
               }
               @keyframes spin-slow {
                 to { transform: rotate(360deg); }
               }
-              .animate-spin-slow { animation: spin-slow 20s linear infinite; }
+              .animate-spin-slow { animation: spin-slow 25s linear infinite; }
 
               @keyframes ping-slow {
                 75%, 100% {
-                  transform: scale(1.5);
+                  transform: scale(1.8);
                   opacity: 0;
                 }
               }
-              .animate-ping-slow { animation: ping-slow 3s cubic-bezier(0, 0, 0.2, 1) infinite; }
+              .animate-ping-slow { animation: ping-slow 4s cubic-bezier(0, 0, 0.2, 1) infinite; }
               
               @keyframes pulse-slow {
-                0%, 100% { opacity: 0.5; transform: scale(1); }
+                0%, 100% { opacity: 0.6; transform: scale(1); }
                 50% { opacity: 0.3; transform: scale(1.05); }
               }
               .animate-pulse-slow { animation: pulse-slow 6s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
 
               @keyframes pulse-slower {
                 0%, 100% { opacity: 0.5; transform: scale(1); }
-                50% { opacity: 0.3; transform: scale(1.03); }
+                50% { opacity: 0.2; transform: scale(1.08); }
               }
               .animate-pulse-slower { animation: pulse-slower 8s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
             `}</style>
           </div>
 
-          {/* Right Column: Status List */}
-          <div className="bg-slate-800/50 dark:bg-slate-800 p-6 sm:p-8 rounded-xl shadow-2xl">
-            <h3 className="text-2xl font-semibold mb-6 text-white dark:text-white">System Status</h3>
-            <ul className="space-y-5">
+          {/* Right Column: Enhanced Status List */}
+          <div className="bg-slate-800/50 dark:bg-slate-800 p-6 sm:p-8 rounded-xl shadow-2xl border border-slate-700/50">
+            <h3 className="text-2xl font-semibold mb-6 text-white dark:text-white flex items-center">
+              <Activity size={28} className="mr-3 text-green-400" />
+              AI Services Status
+            </h3>
+            <ul className="space-y-4">
               {showcaseItems.map((item, index) => (
                 <li
                   key={item.id}
                   ref={el => { itemsRef.current[index] = el; }}
-                  className="flex items-center justify-between p-4 bg-slate-700/60 dark:bg-slate-700 rounded-lg"
+                  className="flex items-center justify-between p-4 bg-slate-700/60 dark:bg-slate-700 rounded-lg hover:bg-slate-700/80 transition-colors duration-200"
                 >
                   <div className="flex items-center">
-                    {index === 0 && <Database size={20} className="mr-3 text-cyan-400" />}
-                    {index === 1 && <Zap size={20} className="mr-3 text-green-400" />}
-                    {index === 2 && <Brain size={20} className="mr-3 text-yellow-400" />}
-                    {index === 3 && <ShieldCheck size={20} className="mr-3 text-purple-400" />}
-                    <span className="text-slate-200 dark:text-slate-300">{item.title}</span>
+                    {index === 0 && <MessageSquare size={20} className="mr-3 text-cyan-400" />}
+                    {index === 1 && <Image size={20} className="mr-3 text-green-400" />}
+                    {index === 2 && <Video size={20} className="mr-3 text-yellow-400" />}
+                    {index === 3 && <Music size={20} className="mr-3 text-purple-400" />}
+                    {index === 4 && <Code size={20} className="mr-3 text-blue-400" />}
+                    <div>
+                      <span className="text-slate-200 dark:text-slate-300 font-medium">{item.title}</span>
+                      <div className="text-xs text-slate-400 dark:text-slate-500">{item.description}</div>
+                    </div>
                   </div>
                   <div className="flex items-center">
-                    <span className={`status-indicator w-3 h-3 rounded-full mr-2 ${item.statusColor}`}></span>
-                    <span className="text-sm text-slate-300 dark:text-slate-400">{item.value}</span>
+                    <span className={`status-indicator w-3 h-3 rounded-full mr-3 ${item.statusColor}`}></span>
+                    <span className="text-sm text-slate-300 dark:text-slate-400 font-mono">{item.value}</span>
                   </div>
                 </li>
               ))}
             </ul>
+
+            {/* Additional metrics summary */}
+            <div className="mt-6 pt-4 border-t border-slate-600/50">
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-slate-400">Total Requests Today</span>
+                <span className="text-green-400 font-mono">2,847,329</span>
+              </div>
+              <div className="flex justify-between items-center text-sm mt-2">
+                <span className="text-slate-400">System Load</span>
+                <span className="text-yellow-400 font-mono">67.3%</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -634,7 +689,8 @@ const ShowcaseSection: React.FC = () => {
 };
 
 // Premium Dashboard Preview Component
-const PremiumDashboardPreview: React.FC<{ user: User }> = ({ user }) => {
+const PremiumDashboardPreview: React.FC = () => {
+  const { user } = useAuthenticated();
   return (
     <section id="dashboard-preview" className="py-16 sm:py-24 bg-gradient-to-br from-yellow-400/10 via-orange-400/10 to-red-400/10 dark:from-yellow-400/20 dark:via-orange-400/20 dark:to-red-400/20">
       <div className="container mx-auto px-6 lg:px-8">
@@ -644,7 +700,7 @@ const PremiumDashboardPreview: React.FC<{ user: User }> = ({ user }) => {
             Premium Dashboard Preview
           </h2>
           <p className="text-lg text-slate-700 dark:text-slate-200 max-w-2xl mx-auto">
-            Welcome, {user.firstName}! Here’s a sneak peek of your enterprise AI dashboard.
+            Welcome, {user?.firstName}! Here’s a sneak peek of your enterprise AI dashboard.
           </p>
         </div>
         <div className="grid md:grid-cols-3 gap-8">
@@ -672,7 +728,17 @@ const PremiumDashboardPreview: React.FC<{ user: User }> = ({ user }) => {
 // Call To Action Section
 const CallToActionSection: React.FC<{ scrollToSection: (id: string) => void }> = ({ scrollToSection }) => {
   const sectionRef = useRef<HTMLElement>(null);
+  const { isSignedIn } = useAuthenticated();
+  const router = useRouter();
 
+  const handleTrial = () => {
+    if (!isSignedIn) {
+      router.push('/signIn')
+    } else {
+      router.push('/dashboard')
+    }
+
+  }
   useEffect(() => {
     gsap.fromTo(sectionRef.current,
       { opacity: 0, y: 50 },
@@ -697,7 +763,9 @@ const CallToActionSection: React.FC<{ scrollToSection: (id: string) => void }> =
           Join the forefront of innovation. Experience the transformative power of our AI SaaS platform and redefine what&apos;s possible.
         </p>
         <div className="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-6">
-          <button className="bg-white hover:bg-slate-100 text-blue-600 font-bold py-3 px-10 rounded-lg text-lg shadow-xl hover:shadow-2xl transition-all duration-300 transform hover:scale-105">
+          <button
+            onClick={() => handleTrial()}
+            className="bg-white hover:bg-slate-100 text-blue-600 font-bold py-3 px-10 rounded-lg text-lg shadow-xl hover:shadow-2xl transition-all duration-300 transform hover:scale-105">
             Start Free Trial
           </button>
           <button
@@ -708,7 +776,7 @@ const CallToActionSection: React.FC<{ scrollToSection: (id: string) => void }> =
           </button>
         </div>
       </div>
-    </section>
+    </section >
   );
 };
 
