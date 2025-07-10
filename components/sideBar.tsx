@@ -87,16 +87,16 @@ const SideBar = () => {
     const pathname = usePathname();
 
     return (
-        <div className="relative flex flex-col h-full bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 border-r border-slate-700/50 backdrop-blur-xl">
+        <div className="relative flex flex-col h-full bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 border-r border-slate-700/50 backdrop-blur-xl overflow-hidden">
             {/* Ambient background effects */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute top-20 -left-10 w-40 h-40 bg-gradient-to-r from-violet-600/20 to-purple-600/20 rounded-full blur-3xl"></div>
                 <div className="absolute bottom-20 -right-10 w-32 h-32 bg-gradient-to-r from-blue-600/20 to-cyan-600/20 rounded-full blur-3xl"></div>
             </div>
 
-            <div className="relative z-10 flex flex-col h-full">
-                {/* Header Section */}
-                <div className="p-6 border-b border-slate-700/50">
+            <div className="relative z-10 flex flex-col h-full min-h-0">
+                {/* Header Section - Fixed */}
+                <div className="flex-shrink-0 p-6 border-b border-slate-700/50">
                     <Link
                         href="/"
                         className="group flex items-center gap-4 p-3 rounded-xl hover:bg-white/5 transition-all duration-300"
@@ -126,109 +126,100 @@ const SideBar = () => {
                     </Link>
                 </div>
 
-                {/* Navigation */}
-                <div className="flex-1 px-4 py-6 space-y-2">
-                    {routes.map((route, index) => {
-                        const isActive = pathname === route.href;
-                        const isSettings = route.href === "/settings";
+                {/* Scrollable Navigation Container */}
+                <div className="flex-1 min-h-0 flex flex-col">
+                    {/* Navigation - Scrollable */}
+                    <div className="flex-1 overflow-y-auto px-4 py-6 space-y-2 scrollbar-thin scrollbar-track-slate-800/50 scrollbar-thumb-slate-600/50 hover:scrollbar-thumb-slate-500/50">
+                        {routes.map((route, index) => {
+                            const isActive = pathname === route.href;
+                            const isSettings = route.href === "/settings";
 
-                        return (
-                            <div key={route.href} className="relative">
-                                <Link
-                                    href={route.href}
-                                    className={cn(
-                                        "group relative flex items-center gap-4 p-4 rounded-xl transition-all duration-300 overflow-hidden",
-                                        isActive
-                                            ? "bg-white/10 text-white shadow-lg shadow-black/20"
-                                            : "text-slate-400 hover:text-white hover:bg-white/5"
-                                    )}
-                                >
-                                    {/* Active indicator */}
-                                    {isActive && (
-                                        <div className={cn(
-                                            "absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 rounded-r-full bg-gradient-to-b transition-all duration-300",
-                                            route.gradient
-                                        )}></div>
-                                    )}
-
-                                    {/* Gradient background for active state */}
-                                    {isActive && (
-                                        <div className={cn(
-                                            "absolute inset-0 bg-gradient-to-r opacity-10 rounded-xl",
-                                            route.gradient
-                                        )}></div>
-                                    )}
-
-                                    {/* Icon container */}
-                                    <div className={cn(
-                                        "relative flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-300",
-                                        isActive ? route.bgGlow : "group-hover:bg-white/5"
-                                    )}>
-                                        {/* Icon glow effect */}
+                            return (
+                                <div key={route.href} className="relative">
+                                    <Link
+                                        href={route.href}
+                                        className={cn(
+                                            "group relative flex items-center gap-4 p-4 rounded-xl transition-all duration-300 overflow-hidden",
+                                            isActive
+                                                ? "bg-white/10 text-white shadow-lg shadow-black/20"
+                                                : "text-slate-400 hover:text-white hover:bg-white/5"
+                                        )}
+                                    >
+                                        {/* Active indicator */}
                                         {isActive && (
                                             <div className={cn(
-                                                "absolute inset-0 rounded-lg blur-md opacity-30",
-                                                route.bgGlow
+                                                "absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 rounded-r-full bg-gradient-to-b transition-all duration-300",
+                                                route.gradient
                                             )}></div>
                                         )}
 
-                                        <route.icon className={cn(
-                                            "relative w-5 h-5 transition-all duration-300",
-                                            isActive ? route.color : "text-slate-500 group-hover:text-slate-300"
+                                        {/* Gradient background for active state */}
+                                        {isActive && (
+                                            <div className={cn(
+                                                "absolute inset-0 bg-gradient-to-r opacity-10 rounded-xl",
+                                                route.gradient
+                                            )}></div>
+                                        )}
+
+                                        {/* Icon container */}
+                                        <div className={cn(
+                                            "relative flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-300",
+                                            isActive ? route.bgGlow : "group-hover:bg-white/5"
+                                        )}>
+                                            {/* Icon glow effect */}
+                                            {isActive && (
+                                                <div className={cn(
+                                                    "absolute inset-0 rounded-lg blur-md opacity-30",
+                                                    route.bgGlow
+                                                )}></div>
+                                            )}
+
+                                            <route.icon className={cn(
+                                                "relative w-5 h-5 transition-all duration-300",
+                                                isActive ? route.color : "text-slate-500 group-hover:text-slate-300"
+                                            )} />
+                                        </div>
+
+                                        {/* Text content */}
+                                        <div className="flex-1 min-w-0">
+                                            <div className={cn(
+                                                "font-medium text-sm transition-all duration-300",
+                                                isActive ? "text-white" : "text-slate-400 group-hover:text-slate-200"
+                                            )}>
+                                                {route.label}
+                                            </div>
+                                            <div className={cn(
+                                                "text-xs transition-all duration-300 opacity-0 group-hover:opacity-100",
+                                                isActive ? "text-slate-300" : "text-slate-500"
+                                            )}>
+                                                {route.description}
+                                            </div>
+                                        </div>
+
+                                        {/* Chevron indicator */}
+                                        <ChevronRight className={cn(
+                                            "w-4 h-4 transition-all duration-300 opacity-0 group-hover:opacity-100 group-hover:translate-x-1",
+                                            isActive ? "opacity-100 translate-x-0" : ""
                                         )} />
-                                    </div>
 
-                                    {/* Text content */}
-                                    <div className="flex-1 min-w-0">
-                                        <div className={cn(
-                                            "font-medium text-sm transition-all duration-300",
-                                            isActive ? "text-white" : "text-slate-400 group-hover:text-slate-200"
-                                        )}>
-                                            {route.label}
-                                        </div>
-                                        <div className={cn(
-                                            "text-xs transition-all duration-300 opacity-0 group-hover:opacity-100",
-                                            isActive ? "text-slate-300" : "text-slate-500"
-                                        )}>
-                                            {route.description}
-                                        </div>
-                                    </div>
+                                        {/* Hover shimmer effect */}
+                                        <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000 bg-gradient-to-r from-transparent via-white/5 to-transparent"></div>
+                                    </Link>
 
-                                    {/* Chevron indicator */}
-                                    <ChevronRight className={cn(
-                                        "w-4 h-4 transition-all duration-300 opacity-0 group-hover:opacity-100 group-hover:translate-x-1",
-                                        isActive ? "opacity-100 translate-x-0" : ""
-                                    )} />
-
-                                    {/* Hover shimmer effect */}
-                                    <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000 bg-gradient-to-r from-transparent via-white/5 to-transparent"></div>
-                                </Link>
-
-                                {/* Separator line before settings */}
-                                {isSettings && index > 0 && (
-                                    <div className="my-4 mx-4 h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent"></div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-
-                {/* Footer */}
-                {/* <div className="p-4 border-t border-slate-700/50">
-                    <div className="flex items-center gap-3 p-3 rounded-xl bg-gradient-to-r from-slate-800/50 to-slate-700/50 border border-slate-600/30">
-                        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600">
-                            <Zap className="w-4 h-4 text-white" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium text-white">Pro Plan</div>
-                            <div className="text-xs text-slate-400 truncate">
-                                Unlimited access
-                            </div>
-                        </div>
-                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                                    {/* Separator line before settings */}
+                                    {isSettings && index > 0 && (
+                                        <div className="my-4 mx-4 h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent"></div>
+                                    )}
+                                </div>
+                            );
+                        })}
                     </div>
-                </div> */}
-                <RequestFooter />
+
+                    {/* Footer - Fixed at bottom */}
+                    <div className="flex-shrink-0">
+                        <RequestFooter />
+                    </div>
+                </div>
             </div>
         </div>
     );
