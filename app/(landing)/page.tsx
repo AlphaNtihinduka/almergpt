@@ -168,11 +168,161 @@ const App: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-cyan-400 mx-auto mb-4"></div>
-          <p className="text-slate-300">Loading your personalized experience...</p>
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center relative overflow-hidden">
+        {/* Background animated elements */}
+        <div className="absolute inset-0">
+          {[...Array(20)].map((_, i) => (
+            <div
+              key={i}
+              className="absolute rounded-full opacity-10"
+              style={{
+                width: `${Math.random() * 100 + 20}px`,
+                height: `${Math.random() * 100 + 20}px`,
+                left: `${Math.random() * 100}%`,
+                top: `${Math.random() * 100}%`,
+                background: [
+                  'rgba(34, 211, 238, 0.3)', // cyan
+                  'rgba(34, 197, 94, 0.3)',  // green
+                  'rgba(251, 191, 36, 0.3)', // yellow
+                  'rgba(168, 85, 247, 0.3)', // purple
+                  'rgba(59, 130, 246, 0.3)', // blue
+                ][i % 5],
+                animation: `float-bg ${Math.random() * 10 + 15}s ease-in-out infinite alternate`,
+                animationDelay: `${i * 0.3}s`
+              }}
+            />
+          ))}
         </div>
+
+        {/* Main loading container */}
+        <div className="relative z-10 text-center">
+          {/* Sophisticated loading animation */}
+          <div className="relative mb-8">
+            {/* Outer rotating ring */}
+            <div className="w-24 h-24 mx-auto relative">
+              <div className="absolute inset-0 rounded-full border-4 border-slate-700"></div>
+              <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-cyan-400 animate-spin"></div>
+              <div className="absolute inset-2 rounded-full border-2 border-transparent border-t-purple-400 animate-spin-reverse"></div>
+
+              {/* Inner pulsing core */}
+              <div className="absolute inset-6 rounded-full bg-gradient-to-br from-cyan-400 to-purple-400 animate-pulse-glow"></div>
+
+              {/* Central AI brain icon */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Brain size={20} className="text-white animate-pulse-slow" />
+              </div>
+            </div>
+
+            {/* Progress indicators */}
+            <div className="flex justify-center mt-6 space-x-2">
+              {[...Array(5)].map((_, i) => (
+                <div
+                  key={i}
+                  className="w-2 h-2 rounded-full bg-slate-600 animate-bounce"
+                  style={{
+                    animationDelay: `${i * 0.2}s`,
+                    animationDuration: '1.4s'
+                  }}
+                ></div>
+              ))}
+            </div>
+          </div>
+
+          {/* Loading text with typewriter effect */}
+          <div className="space-y-4">
+            <h3 className="text-2xl font-bold text-white mb-2 animate-fade-in">
+              Initializing AI Platform
+            </h3>
+            <div className="max-w-md mx-auto">
+              <p className="text-slate-300 text-lg animate-fade-in-delay">
+                Loading your personalized experience...
+              </p>
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center justify-between text-sm text-slate-400">
+                  <span>Conversation Models</span>
+                  <span className="text-cyan-400">Ready</span>
+                </div>
+                <div className="flex items-center justify-between text-sm text-slate-400">
+                  <span>Image Generation</span>
+                  <span className="text-green-400">Ready</span>
+                </div>
+                <div className="flex items-center justify-between text-sm text-slate-400">
+                  <span>Video Processing</span>
+                  <span className="text-yellow-400">Loading...</span>
+                </div>
+                <div className="flex items-center justify-between text-sm text-slate-400">
+                  <span>Music Synthesis</span>
+                  <span className="text-purple-400">Ready</span>
+                </div>
+                <div className="flex items-center justify-between text-sm text-slate-400">
+                  <span>Code Generation</span>
+                  <span className="text-blue-400">Ready</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="mt-8 max-w-sm mx-auto">
+            <div className="w-full bg-slate-700 rounded-full h-1">
+              <div className="bg-gradient-to-r from-cyan-400 to-purple-400 h-1 rounded-full animate-loading-progress"></div>
+            </div>
+            <p className="text-xs text-slate-500 mt-2">Optimizing neural networks...</p>
+          </div>
+        </div>
+
+        {/* Advanced CSS animations */}
+        <style jsx global>{`
+        @keyframes float-bg {
+          0% { transform: translateY(0px) translateX(0px) scale(1); }
+          50% { transform: translateY(${Math.random() * 40 - 20}px) translateX(${Math.random() * 40 - 20}px) scale(1.1); }
+          100% { transform: translateY(0px) translateX(0px) scale(1); }
+        }
+        
+        @keyframes spin-reverse {
+          to { transform: rotate(-360deg); }
+        }
+        .animate-spin-reverse { animation: spin-reverse 2s linear infinite; }
+        
+        @keyframes pulse-glow {
+          0%, 100% { 
+            opacity: 0.8; 
+            transform: scale(1);
+            box-shadow: 0 0 20px rgba(34, 211, 238, 0.3);
+          }
+          50% { 
+            opacity: 1; 
+            transform: scale(1.05);
+            box-shadow: 0 0 30px rgba(34, 211, 238, 0.5);
+          }
+        }
+        .animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+        
+        @keyframes pulse-slow {
+          0%, 100% { opacity: 0.7; }
+          50% { opacity: 1; }
+        }
+        .animate-pulse-slow { animation: pulse-slow 3s ease-in-out infinite; }
+        
+        @keyframes fade-in {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in { animation: fade-in 0.8s ease-out; }
+        
+        @keyframes fade-in-delay {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in-delay { animation: fade-in-delay 0.8s ease-out 0.3s both; }
+        
+        @keyframes loading-progress {
+          0% { width: 0%; }
+          50% { width: 60%; }
+          100% { width: 85%; }
+        }
+        .animate-loading-progress { animation: loading-progress 3s ease-in-out infinite; }
+      `}</style>
       </div>
     );
   }
